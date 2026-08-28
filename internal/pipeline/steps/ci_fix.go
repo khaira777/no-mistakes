@@ -188,12 +188,12 @@ CI logs:
 // result so ordinary transient fix failures keep their existing warn-and-retry
 // behaviour. Only a proven full-budget burn parks: it is the one failure that
 // is guaranteed to cost the same again on the next poll.
-func ciFixAgentBudgetOutcome(sctx *pipeline.StepContext, issueDesc string, err error) *pipeline.StepOutcome {
+func ciFixAgentBudgetOutcome(sctx *pipeline.StepContext, issueDesc string, err error, reviewTargets []scm.ReviewComment) *pipeline.StepOutcome {
 	if err == nil || !errors.Is(err, pipeline.ErrAgentTimeout) {
 		return nil
 	}
 	sctx.Log(fmt.Sprintf("CI auto-fix agent exceeded its invocation budget: %v", err))
-	return ciFixAgentTimeoutOutcome(issueDesc, dirtyRunWorktree(sctx), err)
+	return ciFixAgentTimeoutOutcome(issueDesc, dirtyRunWorktree(sctx), err, reviewTargets)
 }
 
 // dirtyRunWorktree reports the run worktree path when the timed-out agent left

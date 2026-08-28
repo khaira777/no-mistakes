@@ -132,6 +132,7 @@ type Finding struct {
 	ReviewScope             string                  `json:"review_scope,omitempty"`
 	ReviewCommentAggregate  bool                    `json:"review_comments_aggregate,omitempty"`
 	ReviewCommentExclusions ReviewCommentExclusions `json:"review_comment_exclusions,omitempty"`
+	ReviewCommentTargets    ReviewCommentExclusions `json:"review_comment_targets,omitempty"`
 	// Category separates the combined document+lint housekeeping pass's
 	// findings into their owning gates. Empty everywhere else.
 	Category string `json:"category,omitempty"`
@@ -158,6 +159,7 @@ type findingWire struct {
 	ReviewScope             string                  `json:"review_scope,omitempty"`
 	ReviewCommentAggregate  bool                    `json:"review_comments_aggregate,omitempty"`
 	ReviewCommentExclusions ReviewCommentExclusions `json:"review_comment_exclusions,omitempty"`
+	ReviewCommentTargets    ReviewCommentExclusions `json:"review_comment_targets,omitempty"`
 	Category                string                  `json:"category,omitempty"`
 	RequiresHumanReview     *bool                   `json:"requires_human_review,omitempty"`
 }
@@ -423,6 +425,7 @@ func (f *Finding) UnmarshalJSON(data []byte) error {
 	f.ReviewScope = wire.ReviewScope
 	f.ReviewCommentAggregate = wire.ReviewCommentAggregate
 	f.ReviewCommentExclusions = wire.ReviewCommentExclusions
+	f.ReviewCommentTargets = wire.ReviewCommentTargets
 	f.Category = wire.Category
 	if f.Action == "" && wire.RequiresHumanReview != nil {
 		if *wire.RequiresHumanReview {

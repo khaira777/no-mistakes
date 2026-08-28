@@ -285,3 +285,11 @@ func TestTerminalFailureCompletionTimesStillCoverFailingChecks(t *testing.T) {
 		t.Fatalf("completion times = %v, want nothing recorded for non-failures", quiet)
 	}
 }
+
+func TestCIFixAgentTimeoutOutcomePreservesReviewTargets(t *testing.T) {
+	comments := []scm.ReviewComment{{ID: "review-1"}, {ID: "review-2"}}
+	outcome := ciFixAgentTimeoutOutcome("1 unresolved review comment", "", errors.New("timed out"), comments[:1])
+	if selected := selectedReviewComments(comments, outcome.Findings); len(selected) != 1 || selected[0].ID != "review-1" {
+		t.Fatalf("selected review comments = %#v, want only the timed-out target", selected)
+	}
+}

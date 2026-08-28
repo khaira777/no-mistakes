@@ -678,7 +678,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					sctx.Log(fmt.Sprintf("issues detected: %s - manual fix requested...", issueDesc))
 					previousHeadSHA := sctx.Run.HeadSHA
 					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict, reviewCommentsForFix)
-					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err); outcome != nil {
+					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err, reviewCommentsForFix); outcome != nil {
 						return outcome, nil
 					}
 					if err != nil {
@@ -737,7 +737,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					sctx.Log(fmt.Sprintf("issues detected: %s - auto-fixing (attempt %d/%d)...", issueDesc, nextAttempt, autoFixLimit))
 					previousHeadSHA := sctx.Run.HeadSHA
 					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict, reviewCommentsForFix)
-					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err); outcome != nil {
+					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err, reviewCommentsForFix); outcome != nil {
 						return outcome, nil
 					}
 					if err != nil {

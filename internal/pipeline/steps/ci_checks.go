@@ -271,6 +271,11 @@ func selectedReviewComments(comments []scm.ReviewComment, previousFindings strin
 		if strings.HasPrefix(finding.ID, "review-comment-") {
 			selectedIDs[finding.ID] = true
 		}
+		for _, identifier := range finding.ReviewCommentTargets.IDs() {
+			if identifier != "" {
+				selectedIdentifiers[identifier] = true
+			}
+		}
 		if finding.ID == "review-comments-omitted" {
 			if finding.ReviewCommentAggregate {
 				selectedOmittedAggregate = true
@@ -546,7 +551,7 @@ func ciCheckReadFailureOutcome(err error) *pipeline.StepOutcome {
 // its worktree alive rather than tearing them down, and leaves any further
 // attempt to the operator, who can respond with a fix selection to spend
 // another budget deliberately.
-func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error) *pipeline.StepOutcome {
+func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error, reviewTargets []scm.ReviewComment) *pipeline.StepOutcome {
 	description := fmt.Sprintf(
 		"The CI auto-fix agent did not finish within its invocation budget while repairing: %s. "+
 			"Reported: %v. Re-running the same request costs another full budget, so no further attempt is made automatically. "+
@@ -555,13 +560,24 @@ func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error)
 	if dirtyWorktree != "" {
 		description += fmt.Sprintf(" The timed-out agent left uncommitted changes in the run worktree at %s; they are not committed or pushed.", dirtyWorktree)
 	}
+	timeoutFinding := Finding{
+		Severity:    "warning",
+		Description: description,
+		Action:      types.ActionAskUser,
+	}
+	identifiers := make([]string, 0, len(reviewTargets))
+	for _, comment := range reviewTargets {
+		if identifier := reviewCommentIdentifier(comment); identifier != "" {
+			identifiers = append(identifiers, identifier)
+		}
+	}
+	if len(identifiers) > 0 {
+		encoded, _ := json.Marshal(identifiers)
+		timeoutFinding.ReviewCommentTargets = types.ReviewCommentExclusions(string(encoded))
+	}
 	findings := Findings{
 		Summary: "CI auto-fix agent exceeded its invocation budget",
-		Items: []Finding{{
-			Severity:    "warning",
-			Description: description,
-			Action:      types.ActionAskUser,
-		}},
+		Items:   []Finding{timeoutFinding},
 	}
 	findingsJSON, _ := json.Marshal(findings)
 	return &pipeline.StepOutcome{
