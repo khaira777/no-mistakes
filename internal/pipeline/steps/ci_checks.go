@@ -11,8 +11,9 @@ import (
 )
 
 type lastFixedIssues struct {
-	Checks        []string `json:"checks,omitempty"`
-	MergeConflict bool     `json:"mergeConflict,omitempty"`
+	Checks         []string `json:"checks,omitempty"`
+	MergeConflict  bool     `json:"mergeConflict,omitempty"`
+	ReviewComments []string `json:"reviewComments,omitempty"`
 }
 
 // pollInterval returns the polling interval based on elapsed time since CI monitoring started.
@@ -87,7 +88,7 @@ func failingCheckNames(checks []scm.Check) []string {
 //
 // It covers the whole terminal-failure set rather than just the fail bucket
 // because a cancelled check can be a fix target too (see the CI step's
-// fixTargets). Keying the snapshot on the fail bucket alone would leave a
+// fixTargets). Keyed on the fail bucket alone would leave a
 // cancelled-only fix round with no completion evidence at all, and the step
 // would then have no way to notice its own re-run.
 func terminalFailureCompletionTimes(checks []scm.Check) map[string]time.Time {
@@ -155,11 +156,23 @@ func pendingCheckMatchesLastFixed(checks []scm.Check, lastFixedChecks string) bo
 	return false
 }
 
-func encodeLastFixedChecks(failing []string, mergeConflict bool) string {
-	if len(failing) == 0 && !mergeConflict {
+func encodeLastFixedChecks(failing []string, mergeConflict bool, optionalReviews ...[]scm.ReviewComment) string {
+	var reviewComments []scm.ReviewComment
+	if len(optionalReviews) > 0 {
+		reviewComments = optionalReviews[0]
+	}
+	var commentKeys []string
+	for _, c := range reviewComments {
+		commentKeys = append(commentKeys, fmt.Sprintf("%s:%s:%d", c.Author, c.Path, c.Line))
+	}
+	if len(failing) == 0 && !mergeConflict && len(commentKeys) == 0 {
 		return ""
 	}
-	encoded, err := json.Marshal(lastFixedIssues{Checks: failing, MergeConflict: mergeConflict})
+	encoded, err := json.Marshal(lastFixedIssues{
+		Checks:         failing,
+		MergeConflict:  mergeConflict,
+		ReviewComments: commentKeys,
+	})
 	if err != nil {
 		return ""
 	}
@@ -174,13 +187,13 @@ func decodeLastFixedChecks(raw string) (lastFixedIssues, bool) {
 	if err := json.Unmarshal([]byte(raw), &issues); err != nil {
 		return lastFixedIssues{}, false
 	}
-	if len(issues.Checks) == 0 && !issues.MergeConflict {
+	if len(issues.Checks) == 0 && !issues.MergeConflict && len(issues.ReviewComments) == 0 {
 		return lastFixedIssues{}, false
 	}
 	return issues, true
 }
 
-func ciFailureOutcome(failing []string, mergeConflict bool, summary string) *pipeline.StepOutcome {
+func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm.ReviewComment, summary string) *pipeline.StepOutcome {
 	findings := Findings{Summary: summary}
 	for _, name := range failing {
 		findings.Items = append(findings.Items, Finding{
@@ -192,6 +205,16 @@ func ciFailureOutcome(failing []string, mergeConflict bool, summary string) *pip
 		findings.Items = append(findings.Items, Finding{
 			Severity:    "warning",
 			Description: "PR has merge conflicts with the base branch",
+		})
+	}
+	for _, c := range reviewComments {
+		loc := c.Path
+		if c.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+		}
+		findings.Items = append(findings.Items, Finding{
+			Severity:    "warning",
+			Description: fmt.Sprintf("unresolved PR review comment from @%s on %s", c.Author, loc),
 		})
 	}
 	findingsJSON, _ := json.Marshal(findings)
@@ -253,6 +276,22 @@ func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error)
 		Items: []Finding{{
 			Severity:    "warning",
 			Description: description,
+			Action:      types.ActionAskUser,
+		}},
+	}
+	findingsJSON, _ := json.Marshal(findings)
+	return &pipeline.StepOutcome{
+		NeedsApproval: true,
+		Findings:      string(findingsJSON),
+	}
+}
+
+func ciReviewReadFailureOutcome(err error) *pipeline.StepOutcome {
+	findings := Findings{
+		Summary: "PR review comments could not be read from the provider",
+		Items: []Finding{{
+			Severity:    "warning",
+			Description: fmt.Sprintf("PR review comments could not be read from the provider: %v. Verify that the provider CLI or credentials are authenticated and have permissions to read pull request reviews.", err),
 			Action:      types.ActionAskUser,
 		}},
 	}

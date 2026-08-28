@@ -433,7 +433,7 @@ func (h *Host) getPRChecks(ctx context.Context, selector string) ([]scm.Check, e
 
 const commitChecksQuery = `query($owner:String!,$name:String!,$oid:String!,$cursor:String){repository(owner:$owner,name:$name){object(expression:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$cursor){nodes{__typename ... on CheckRun{name status conclusion completedAt startedAt detailsUrl} ... on StatusContext{context state targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}`
 
-const reviewThreadsQuery = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved comments(first:100){nodes{databaseId body path line url createdAt author{login}}}} pageInfo{hasNextPage endCursor}}}}}`
+const reviewThreadsQuery = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{isResolved isOutdated comments(first:100){nodes{databaseId body path line url createdAt author{login}}}} pageInfo{hasNextPage endCursor}}}}}`
 
 func (h *Host) getCommitChecks(ctx context.Context, headSHA string) ([]scm.Check, error) {
 	repo := h.repoSlug()
@@ -1224,6 +1224,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 						ReviewThreads struct {
 							Nodes []struct {
 								IsResolved bool `json:"isResolved"`
+								IsOutdated bool `json:"isOutdated"`
 								Comments   struct {
 									Nodes []struct {
 										ID        int64     `json:"databaseId"`
@@ -1261,7 +1262,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 		}
 		threads := response.Data.Repository.PullRequest.ReviewThreads
 		for _, thread := range threads.Nodes {
-			if thread.IsResolved {
+			if thread.IsResolved || thread.IsOutdated {
 				continue
 			}
 			for _, raw := range thread.Comments.Nodes {
@@ -1296,7 +1297,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 
 func isSupportedReviewBot(login string) bool {
 	switch strings.ToLower(strings.TrimSpace(login)) {
-	case "greptile-apps[bot]", "greptile-apps":
+	case "greptile-apps[bot]", "greptile-apps", "coderabbitai[bot]", "coderabbitai":
 		return true
 	default:
 		return false

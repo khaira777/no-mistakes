@@ -250,13 +250,15 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 	manualFixAttempted := false
 	mergeabilityBlockedReason := ""
 	timeoutFailingChecks := []string{}
+	timeoutReviewComments := []scm.ReviewComment{}
 	timeoutMergeConflict := false
 	lastMonitorLog := ""
 	consecutiveCheckErrs := 0
+	consecutiveReviewErrs := 0
 	timeoutOutcome := func() (*pipeline.StepOutcome, error) {
 		sctx.Log("CI timeout reached")
-		if len(timeoutFailingChecks) > 0 || timeoutMergeConflict {
-			return ciFailureOutcome(timeoutFailingChecks, timeoutMergeConflict, "CI timed out with known failures still present"), nil
+		if len(timeoutFailingChecks) > 0 || timeoutMergeConflict || len(timeoutReviewComments) > 0 {
+			return ciFailureOutcome(timeoutFailingChecks, timeoutMergeConflict, timeoutReviewComments, "CI timed out with known failures still present"), nil
 		}
 		if mergeabilityBlockedReason != "" {
 			return ciMergeabilityOutcome("mergeability check timed out", mergeabilityBlockedReason), nil
@@ -373,6 +375,27 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 			}
 		}
 
+		// Check review comments if the provider supports them
+		var reviewComments []scm.ReviewComment
+		var reviewErr error
+		if host.Capabilities().ReviewComments {
+			if rch, ok := host.(scm.ReviewCommentsHost); ok {
+				reviewComments, reviewErr = rch.GetReviewComments(ctx, pr)
+				if reviewErr != nil && reviewErr != scm.ErrUnsupported {
+					clearCIMonitorReady(sctx)
+					lastMonitorLog = ""
+					sctx.Log(fmt.Sprintf("warning: could not check PR review comments: %v", reviewErr))
+					consecutiveReviewErrs++
+					if consecutiveReviewErrs >= consecutiveCheckErrorLimit {
+						sctx.Log(fmt.Sprintf("PR review comments could not be read %d consecutive times, parking for a decision", consecutiveReviewErrs))
+						return ciReviewReadFailureOutcome(reviewErr), nil
+					}
+				} else {
+					consecutiveReviewErrs = 0
+				}
+			}
+		}
+
 		// Check CI status - wait for all checks to complete before fixing
 		ciFixLimit := sctx.Config.AutoFix.CI
 		pr.HeadSHA = sctx.Run.HeadSHA
@@ -480,12 +503,14 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 			sort.Strings(failing)
 			sort.Strings(unresolvedCancelled)
 			sort.Strings(awaitingRerun)
+			hasReviewFindings := len(reviewComments) > 0
 			hasFailures := len(failing) > 0
-			hasIssues := hasFailures || mergeConflict || len(unresolvedCancelled) > 0
+			hasIssues := hasFailures || mergeConflict || len(unresolvedCancelled) > 0 || hasReviewFindings
 			// reportedIssues is what the step tells the user about; failing
 			// stays the set the fix agent is asked to repair.
 			reportedIssues := mergeCheckNames(failing, unresolvedCancelled)
 			timeoutFailingChecks = append(timeoutFailingChecks[:0], mergeCheckNames(reportedIssues, awaitingRerun)...)
+			timeoutReviewComments = append(timeoutReviewComments[:0], reviewComments...)
 
 			if hasIssues || len(awaitingRerun) > 0 {
 				if err := setCIMonitorReadiness(sctx, false, false); err != nil {
@@ -511,7 +536,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				sctx.Log("issues detected but checks still pending, waiting for all checks to complete...")
 			} else if hasIssues {
 				lastMonitorLog = ""
-				if !hasFailures && !mergeConflict && !sctx.Fixing {
+				if !hasFailures && !mergeConflict && !hasReviewFindings && !sctx.Fixing {
 					// Every remaining issue is a transient check rather than a
 					// verdict on the code. No fix can clear one,
 					// so this parks for a decision instead of spending a
@@ -529,7 +554,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				if sctx.Fixing {
 					fixTargets = reportedIssues
 				}
-				fixKey := encodeLastFixedChecks(fixTargets, mergeConflict)
+				fixKey := encodeLastFixedChecks(fixTargets, mergeConflict, reviewComments)
 				fixCompletedAt := terminalFailureCompletionTimes(checks)
 				issueDesc := strings.Join(fixTargets, ", ")
 				if mergeConflict {
@@ -539,11 +564,22 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 						issueDesc = "merge conflict"
 					}
 				}
+				if hasReviewFindings {
+					reviewDesc := fmt.Sprintf("%d unresolved review comment", len(reviewComments))
+					if len(reviewComments) > 1 {
+						reviewDesc += "s"
+					}
+					if issueDesc != "" {
+						issueDesc += " + " + reviewDesc
+					} else {
+						issueDesc = reviewDesc
+					}
+				}
 				if sctx.Fixing && !manualFixAttempted {
 					manualFixAttempted = true
 					sctx.Log(fmt.Sprintf("issues detected: %s - manual fix requested...", issueDesc))
 					previousHeadSHA := sctx.Run.HeadSHA
-					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict)
+					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict, reviewComments)
 					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err); outcome != nil {
 						return outcome, nil
 					}
@@ -560,16 +596,16 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 						// checks against the new head.
 					} else {
 						sctx.Log("CI fix produced no changes, returning for manual intervention...")
-						return ciFailureOutcome(reportedIssues, mergeConflict, "CI fix produced no changes - failures require manual intervention"), nil
+						return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI fix produced no changes - failures require manual intervention"), nil
 					}
 				} else if sctx.Fixing && fixKey == s.lastFixedChecks {
 					sctx.Log("fix already attempted for these issues, waiting for CI re-run...")
 				} else if ciFixLimit <= 0 {
 					sctx.Log(fmt.Sprintf("issues detected: %s - auto-fix disabled, waiting for manual intervention...", issueDesc))
-					return ciFailureOutcome(reportedIssues, mergeConflict, "CI failures require manual intervention"), nil
+					return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI failures require manual intervention"), nil
 				} else if s.ciFixAttempts >= ciFixLimit {
 					sctx.Log(fmt.Sprintf("issues detected: %s - max auto-fix attempts (%d) reached, waiting for manual intervention...", issueDesc, ciFixLimit))
-					return ciFailureOutcome(reportedIssues, mergeConflict, "CI failures still present after auto-fix attempts"), nil
+					return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI failures still present after auto-fix attempts"), nil
 				} else if fixKey == s.lastFixedChecks {
 					sctx.Log("fix already attempted for these issues, waiting for CI re-run...")
 				} else {
@@ -582,7 +618,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					s.ciFixAttempts = nextAttempt
 					sctx.Log(fmt.Sprintf("issues detected: %s - auto-fixing (attempt %d/%d)...", issueDesc, s.ciFixAttempts, ciFixLimit))
 					previousHeadSHA := sctx.Run.HeadSHA
-					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict)
+					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict, reviewComments)
 					if outcome := ciFixAgentBudgetOutcome(sctx, issueDesc, err); outcome != nil {
 						return outcome, nil
 					}
@@ -607,7 +643,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				s.lastFixedChecks = ""
 				s.lastFixedCompletedAt = nil
 				switch {
-				case !prStateKnown || !mergeabilityKnown:
+				case !prStateKnown || !mergeabilityKnown || (reviewErr != nil && reviewErr != scm.ErrUnsupported):
 					clearCIMonitorReady(sctx)
 					lastMonitorLog = ""
 				case readinessPending:

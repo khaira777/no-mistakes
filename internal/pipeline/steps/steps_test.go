@@ -395,6 +395,10 @@ func fakeCIGHReconcileHandler(args []string) {
 		os.Exit(0)
 	}
 	if strings.Contains(joined, "api") && strings.Contains(joined, "graphql") {
+		if strings.Contains(joined, "reviewThreads") {
+			printFakeReviewComments()
+			os.Exit(0)
+		}
 		printFakeCommitChecks(`[{"name":"build","state":"SUCCESS","bucket":"pass"}]`, args)
 		os.Exit(0)
 	}
@@ -446,6 +450,10 @@ func fakeCIGHHandler(args []string) {
 		os.Exit(0)
 	}
 	if strings.Contains(joined, "api") && strings.Contains(joined, "graphql") {
+		if strings.Contains(joined, "reviewThreads") {
+			printFakeReviewComments()
+			os.Exit(0)
+		}
 		if checksErr != "" {
 			fmt.Fprintln(os.Stderr, checksErr)
 			os.Exit(1)
@@ -536,6 +544,10 @@ func fakeCIGHSequenceHandler(args []string) {
 		os.Exit(0)
 	}
 	if strings.Contains(joined, "api") && strings.Contains(joined, "graphql") {
+		if strings.Contains(joined, "reviewThreads") {
+			printFakeReviewComments()
+			os.Exit(0)
+		}
 		data, err := os.ReadFile(checksPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -705,6 +717,10 @@ func fakeCIGHNoChecksHandler(args []string) {
 		os.Exit(0)
 	}
 	if strings.Contains(joined, "api") && strings.Contains(joined, "graphql") {
+		if strings.Contains(joined, "reviewThreads") {
+			printFakeReviewComments()
+			os.Exit(0)
+		}
 		printFakeCommitChecks("[]", args)
 		os.Exit(0)
 	}
@@ -717,6 +733,18 @@ func fakeCIGHNoChecksHandler(args []string) {
 		os.Exit(0)
 	}
 	os.Exit(1)
+}
+
+func printFakeReviewComments() {
+	if reviewErr := os.Getenv("FAKE_CLI_REVIEW_COMMENTS_ERR"); reviewErr != "" {
+		fmt.Fprintln(os.Stderr, reviewErr)
+		os.Exit(1)
+	}
+	if reviewsJSON := os.Getenv("FAKE_CLI_REVIEW_COMMENTS"); reviewsJSON != "" {
+		fmt.Println(reviewsJSON)
+		return
+	}
+	fmt.Println(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`)
 }
 
 func printFakeWorkflowRuns() {

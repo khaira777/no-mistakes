@@ -1650,13 +1650,15 @@ func TestHost_GetReviewComments(t *testing.T) {
 	t.Parallel()
 
 	firstPage := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
-		{"isResolved":true,"comments":{"nodes":[{"databaseId":1,"body":"resolved","path":"pkg/resolved.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}]}},
-		{"isResolved":false,"comments":{"nodes":[{"databaseId":2,"body":"human","path":"pkg/human.go","line":8,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r2","createdAt":"2026-08-27T12:01:00Z","author":{"login":"reviewer"}}]}},
-		{"isResolved":false,"comments":{"nodes":[{"databaseId":3,"body":"other bot","path":"pkg/other.go","line":9,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r3","createdAt":"2026-08-27T12:02:00Z","author":{"login":"dependabot[bot]"}}]}},
-		{"isResolved":false,"comments":{"nodes":[{"databaseId":12345,"body":"Fix this null pointer","path":"pkg/foo.go","line":42,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12345","createdAt":"2026-08-27T12:03:00Z","author":{"login":"greptile-apps[bot]"}}]}}
+		{"isResolved":true,"isOutdated":false,"comments":{"nodes":[{"databaseId":1,"body":"resolved","path":"pkg/resolved.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}]}},
+		{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"databaseId":10,"body":"outdated finding","path":"pkg/outdated.go","line":5,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r10","createdAt":"2026-08-27T12:00:30Z","author":{"login":"greptile-apps[bot]"}}]}},
+		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":2,"body":"human","path":"pkg/human.go","line":8,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r2","createdAt":"2026-08-27T12:01:00Z","author":{"login":"reviewer"}}]}},
+		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":3,"body":"other bot","path":"pkg/other.go","line":9,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r3","createdAt":"2026-08-27T12:02:00Z","author":{"login":"dependabot[bot]"}}]}},
+		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12345,"body":"Fix this null pointer","path":"pkg/foo.go","line":42,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12345","createdAt":"2026-08-27T12:03:00Z","author":{"login":"greptile-apps[bot]"}}]}},
+		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12347,"body":"CodeRabbit finding","path":"pkg/cr.go","line":15,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12347","createdAt":"2026-08-27T12:03:30Z","author":{"login":"coderabbitai[bot]"}}]}}
 	],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}`
 	secondPage := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
-		{"isResolved":false,"comments":{"nodes":[{"databaseId":12346,"body":"Second page","path":"pkg/bar.go","line":null,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12346","createdAt":"2026-08-27T12:04:00Z","author":{"login":"greptile-apps"}}]}}
+		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12346,"body":"Second page","path":"pkg/bar.go","line":null,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12346","createdAt":"2026-08-27T12:04:00Z","author":{"login":"greptile-apps"}}]}}
 	],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
 	command := func(cursor string) string {
 		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadsQuery,
@@ -1676,14 +1678,18 @@ func TestHost_GetReviewComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewComments failed: %v", err)
 	}
-	if len(comments) != 2 {
-		t.Fatalf("expected 2 comments, got %d", len(comments))
+	if len(comments) != 3 {
+		t.Fatalf("expected 3 comments, got %d: %#v", len(comments), comments)
 	}
 	c := comments[0]
 	if c.ID != "12345" || c.Author != "greptile-apps[bot]" || c.Path != "pkg/foo.go" || c.Line != 42 || c.Body != "Fix this null pointer" {
 		t.Fatalf("unexpected comment parsed: %#v", c)
 	}
-	if comments[1].ID != "12346" || comments[1].Line != 0 || comments[1].Author != "greptile-apps" {
-		t.Fatalf("unexpected paginated comment: %#v", comments[1])
+	c2 := comments[1]
+	if c2.ID != "12347" || c2.Author != "coderabbitai[bot]" || c2.Path != "pkg/cr.go" || c2.Line != 15 || c2.Body != "CodeRabbit finding" {
+		t.Fatalf("unexpected coderabbit comment: %#v", c2)
+	}
+	if comments[2].ID != "12346" || comments[2].Line != 0 || comments[2].Author != "greptile-apps" {
+		t.Fatalf("unexpected paginated comment: %#v", comments[2])
 	}
 }
