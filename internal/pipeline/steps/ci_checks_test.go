@@ -149,21 +149,40 @@ func TestCIFailureOutcomeSanitizesReviewCommentTerminalControls(t *testing.T) {
 func TestCIReviewReadFailureOutcomeBoundsAndSanitizesProviderError(t *testing.T) {
 	t.Parallel()
 
-	err := errors.New("provider response: \x1b]0;spoof\x07" + strings.Repeat("x", 10*1024))
+	err := errors.New("provider response: \x1b]0;spoof\x07 https://user:token@example.com/repo " + strings.Repeat("x", 10*1024))
 	outcome := ciReviewReadFailureOutcome(err)
 	var findings Findings
 	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
 		t.Fatalf("decode findings: %v", err)
 	}
 	description := findings.Items[0].Description
-	if strings.ContainsAny(description, "\x1b\x07") || strings.Contains(description, "spoof") {
+	if strings.ContainsAny(description, "\x1b\x07") || strings.Contains(description, "spoof") || strings.Contains(description, "token") {
 		t.Fatalf("provider controls survived findings sanitization: %q", description)
+	}
+	if !strings.Contains(description, "https://redacted@example.com/repo") {
+		t.Fatalf("provider URL was not redacted: %q", description)
 	}
 	if !strings.Contains(description, "... [truncated]") {
 		t.Fatalf("provider error was not bounded: %q", description)
 	}
 	if len(description) > maxCommentBodyBytes+256 {
 		t.Fatalf("provider error description is unbounded at %d bytes", len(description))
+	}
+}
+
+func TestSelectedReviewCommentsUsesSelectedFindingIDs(t *testing.T) {
+	t.Parallel()
+
+	comments := []scm.ReviewComment{
+		{ID: "1", Path: "one.go", Line: 10, Body: "first"},
+		{ID: "2", Path: "two.go", Line: 20, Body: "second"},
+	}
+	selected := selectedReviewComments(comments, `{"findings":[{"id":"review-comment-2"}]}`)
+	if len(selected) != 1 || selected[0].ID != "2" {
+		t.Fatalf("selected review comments = %#v, want comment 2", selected)
+	}
+	if got := selectedReviewComments(comments, `{"findings":[{"id":"ci-1"}]}`); len(got) != 0 {
+		t.Fatalf("unselected review comments = %#v, want none", got)
 	}
 }
 

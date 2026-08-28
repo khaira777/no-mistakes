@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/safeurl"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
@@ -219,6 +220,7 @@ func reviewProviderErrorSummary(err error) string {
 		return ""
 	}
 	text := sanitizeReviewFindingText(err.Error())
+	text = safeurl.RedactText(text)
 	text = strings.Map(func(r rune) rune {
 		switch r {
 		case '\n', '\r', '\t':
@@ -228,6 +230,34 @@ func reviewProviderErrorSummary(err error) string {
 		}
 	}, text)
 	return trimCommentBody(text, maxCommentBodyBytes)
+}
+
+func selectedReviewComments(comments []scm.ReviewComment, previousFindings string) []scm.ReviewComment {
+	if len(comments) == 0 || strings.TrimSpace(previousFindings) == "" {
+		return nil
+	}
+	findings, err := types.ParseFindingsJSON(previousFindings)
+	if err != nil {
+		return nil
+	}
+	selectedIDs := make(map[string]bool)
+	selectedDetails := make(map[string]bool)
+	for _, finding := range findings.Items {
+		if strings.HasPrefix(finding.ID, "review-comment-") {
+			selectedIDs[finding.ID] = true
+		}
+		if finding.File != "" && strings.HasPrefix(finding.Description, "unresolved PR review comment from ") {
+			selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] = true
+		}
+	}
+	selected := make([]scm.ReviewComment, 0, len(comments))
+	for _, comment := range comments {
+		finding := reviewCommentFinding(comment)
+		if (finding.ID != "" && selectedIDs[finding.ID]) || selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] {
+			selected = append(selected, comment)
+		}
+	}
+	return selected
 }
 
 func reviewCommentFinding(c scm.ReviewComment) Finding {

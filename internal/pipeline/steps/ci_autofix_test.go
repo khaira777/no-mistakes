@@ -1464,7 +1464,7 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 	sctx.Repo.UpstreamURL = upstream
 	sctx.Run.Branch = "refs/heads/feature"
 	sctx.Config.CITimeout = 30 * time.Second
-	sctx.Config.AutoFix = config.AutoFix{CI: 3}
+	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 3}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1498,14 +1498,21 @@ func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *tes
 	reviewsJSON := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":456,"body":"Security issue with token handling","path":"auth.go","line":12,"url":"https://github.com/test/repo/pull/42#r456","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
 	env := fakeCIGHReviewComments(t, "OPEN", checksJSON, reviewsJSON)
 
-	ag := &mockAgent{name: "test"}
+	agentCalled := false
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			agentCalled = true
+			return &agent.Result{}, nil
+		},
+	}
 	prURL := "https://github.com/test/repo/pull/42"
 	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Run.Branch = "refs/heads/feature"
 	sctx.Config.CITimeout = 30 * time.Second
-	sctx.Config.AutoFix = config.AutoFix{CI: 0}
+	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 0}
 
 	step := &CIStep{}
 	outcome, err := step.Execute(sctx)
@@ -1514,6 +1521,9 @@ func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *tes
 	}
 	if outcome == nil || !outcome.NeedsApproval {
 		t.Fatalf("expected approval outcome when review comments exist with auto-fix disabled, got: %#v", outcome)
+	}
+	if agentCalled {
+		t.Fatal("review comments bypassed the review auto-fix policy")
 	}
 	var findings Findings
 	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {

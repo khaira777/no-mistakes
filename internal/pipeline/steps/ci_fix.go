@@ -56,13 +56,14 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 	}
 
 	var reviewCommentsSection string
+	reviewsProvided := len(optionalReviews) > 0
 	if len(reviewComments) > 0 {
 		reviewCommentsSection = formatReviewComments(reviewComments)
-	} else if host.Capabilities().ReviewComments {
+	} else if !reviewsProvided && host.Capabilities().ReviewComments {
 		if rch, ok := host.(scm.ReviewCommentsHost); ok {
 			comments, err := rch.GetReviewComments(ctx, pr)
 			if err != nil && err != scm.ErrUnsupported {
-				slog.Warn("failed to fetch PR review comments", "err", err)
+				slog.Warn("failed to fetch PR review comments", "err", reviewProviderErrorSummary(err))
 			} else if len(comments) > 0 {
 				reviewCommentsSection = formatReviewComments(comments)
 			}
