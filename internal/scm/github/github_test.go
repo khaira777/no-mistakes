@@ -1693,3 +1693,25 @@ func TestHost_GetReviewComments(t *testing.T) {
 		t.Fatalf("unexpected paginated comment: %#v", comments[2])
 	}
 }
+
+func TestIsSupportedReviewBot(t *testing.T) {
+	tests := []struct {
+		login string
+		want  bool
+	}{
+		{login: "greptile-apps[bot]", want: true},
+		{login: "coderabbitai[bot]", want: true},
+		{login: "github-code-quality[bot]", want: true},
+		{login: "github-code-scanning[bot]", want: true},
+		{login: "chatgpt-codex-connector[bot]", want: true},
+		{login: "dependabot[bot]", want: false},
+		{login: "reviewer", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.login, func(t *testing.T) {
+			if got := isSupportedReviewBot(tt.login); got != tt.want {
+				t.Fatalf("isSupportedReviewBot(%q) = %v, want %v", tt.login, got, tt.want)
+			}
+		})
+	}
+}

@@ -3,6 +3,8 @@ package steps
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
@@ -163,8 +165,13 @@ func encodeLastFixedChecks(failing []string, mergeConflict bool, optionalReviews
 	}
 	var commentKeys []string
 	for _, c := range reviewComments {
-		commentKeys = append(commentKeys, fmt.Sprintf("%s:%s:%d", c.Author, c.Path, c.Line))
+		key := strings.TrimSpace(c.ID)
+		if key == "" {
+			key = fmt.Sprintf("%s:%s:%d", c.Author, c.Path, c.Line)
+		}
+		commentKeys = append(commentKeys, key)
 	}
+	sort.Strings(commentKeys)
 	if len(failing) == 0 && !mergeConflict && len(commentKeys) == 0 {
 		return ""
 	}
@@ -194,6 +201,18 @@ func decodeLastFixedChecks(raw string) (lastFixedIssues, bool) {
 }
 
 func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm.ReviewComment, summary string) *pipeline.StepOutcome {
+	if len(failing) == 0 && !mergeConflict && len(reviewComments) > 0 {
+		switch summary {
+		case "CI timed out with known failures still present":
+			summary = "CI monitoring timed out with unresolved PR review comments"
+		case "CI fix produced no changes - failures require manual intervention":
+			summary = "CI fix produced no changes - PR review comments require manual intervention"
+		case "CI failures still present after auto-fix attempts":
+			summary = "PR review comments still present after auto-fix attempts"
+		default:
+			summary = "PR review comments require manual intervention"
+		}
+	}
 	findings := Findings{Summary: summary}
 	for _, name := range failing {
 		findings.Items = append(findings.Items, Finding{
@@ -212,10 +231,27 @@ func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm
 		if c.Line > 0 {
 			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
 		}
-		findings.Items = append(findings.Items, Finding{
+		author := strings.TrimSpace(c.Author)
+		if author == "" {
+			author = "review bot"
+		}
+		description := fmt.Sprintf("unresolved PR review comment from @%s on %s", author, loc)
+		if body := trimCommentBody(c.Body, maxCommentBodyBytes); body != "" {
+			description += ": " + body
+		}
+		if c.URL != "" {
+			description += fmt.Sprintf(" (see %s)", c.URL)
+		}
+		finding := Finding{
 			Severity:    "warning",
-			Description: fmt.Sprintf("unresolved PR review comment from @%s on %s", c.Author, loc),
-		})
+			File:        c.Path,
+			Line:        c.Line,
+			Description: description,
+		}
+		if c.ID != "" {
+			finding.ID = "review-comment-" + c.ID
+		}
+		findings.Items = append(findings.Items, finding)
 	}
 	findingsJSON, _ := json.Marshal(findings)
 	return &pipeline.StepOutcome{

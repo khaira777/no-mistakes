@@ -56,6 +56,25 @@ func TestPendingCheckMatchesLastFixed_SpecialCheckNames(t *testing.T) {
 	}
 }
 
+func TestEncodeLastFixedChecks_UsesStableSortedReviewCommentKeys(t *testing.T) {
+	comments := []scm.ReviewComment{
+		{ID: "comment-b", Author: "bot", Path: "b.go", Line: 2},
+		{ID: "comment-a", Author: "bot", Path: "a.go", Line: 1},
+	}
+	first := encodeLastFixedChecks(nil, false, comments)
+	second := encodeLastFixedChecks(nil, false, []scm.ReviewComment{comments[1], comments[0]})
+	if first != second {
+		t.Fatalf("reordered review comments changed fix key: %q != %q", first, second)
+	}
+	replaced := encodeLastFixedChecks(nil, false, []scm.ReviewComment{
+		{ID: "comment-c", Author: "bot", Path: "b.go", Line: 2},
+		comments[1],
+	})
+	if first == replaced {
+		t.Fatalf("replaced review comment reused fix key: %q", first)
+	}
+}
+
 // A cancelled check can be a fix target, so the completion snapshot that lets
 // the step notice its own CI re-run has to cover it. Keyed on the fail bucket
 // alone, a cancelled-only fix round records nothing and the step can only log

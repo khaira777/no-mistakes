@@ -1515,7 +1515,14 @@ func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *tes
 	if outcome == nil || !outcome.NeedsApproval {
 		t.Fatalf("expected approval outcome when review comments exist with auto-fix disabled, got: %#v", outcome)
 	}
-	if !strings.Contains(outcome.Findings, "unresolved PR review comment from @greptile-apps[bot] on auth.go:12") {
-		t.Fatalf("expected findings to contain review comment details, got: %s", outcome.Findings)
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	if findings.Summary != "PR review comments require manual intervention" {
+		t.Fatalf("findings summary = %q, want review-specific summary", findings.Summary)
+	}
+	if len(findings.Items) != 1 || findings.Items[0].File != "auth.go" || findings.Items[0].Line != 12 || !strings.Contains(findings.Items[0].Description, "Security issue with token handling") || !strings.Contains(findings.Items[0].Description, "https://github.com/test/repo/pull/42#r456") {
+		t.Fatalf("expected structured review comment details, got: %#v", findings.Items)
 	}
 }
