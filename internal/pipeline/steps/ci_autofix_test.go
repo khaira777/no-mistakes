@@ -1537,3 +1537,48 @@ func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *tes
 		t.Fatalf("expected structured review comment details, got: %#v", findings.Items)
 	}
 }
+
+func TestCIStep_FixMode_DoesNotRunWithoutSelectedReviewTargets(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+
+	checksJSON := `[{"name":"build","state":"SUCCESS","bucket":"pass"}]`
+	reviewsJSON := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":789,"body":"Please fix this","path":"main.go","line":8,"url":"https://github.com/test/repo/pull/42#r789","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	env := fakeCIGHReviewComments(t, "OPEN", checksJSON, reviewsJSON)
+
+	agentCalled := false
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			agentCalled = true
+			return &agent.Result{}, nil
+		},
+	}
+	prURL := "https://github.com/test/repo/pull/42"
+	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Env = env
+	sctx.Run.PRURL = &prURL
+	sctx.Run.Branch = "refs/heads/feature"
+	sctx.Config.CITimeout = 30 * time.Second
+	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
+	sctx.Fixing = true
+	sctx.PreviousFindings = `{"findings":[{"id":"ci-1"}]}`
+
+	outcome, err := (&CIStep{}).Execute(sctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome == nil || !outcome.NeedsApproval {
+		t.Fatalf("expected approval outcome, got: %#v", outcome)
+	}
+	if agentCalled {
+		t.Fatal("agent ran without selected review targets")
+	}
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	if findings.Summary != "PR review comments require manual intervention" {
+		t.Fatalf("findings summary = %q, want review-specific summary", findings.Summary)
+	}
+}

@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -53,6 +54,47 @@ type CIStep struct {
 	// must not re-arm the timeout. Overridable for testing; defaults to
 	// fetching the upstream default branch.
 	baseBranchTip func(context.Context) (string, bool)
+}
+
+type ciReviewState struct {
+	ReviewFixAttempts    int    `json:"reviewFixAttempts"`
+	LastFixedReview      string `json:"lastFixedReview,omitempty"`
+	ManualReviewScope    string `json:"manualReviewScope,omitempty"`
+	ManualReviewScopeSet bool   `json:"manualReviewScopeSet,omitempty"`
+}
+
+func (s *CIStep) restoreCIReviewState(raw *string) error {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil
+	}
+	var state ciReviewState
+	if err := json.Unmarshal([]byte(*raw), &state); err != nil {
+		return err
+	}
+	if state.ReviewFixAttempts < 0 {
+		return fmt.Errorf("invalid review auto-fix attempt count %d", state.ReviewFixAttempts)
+	}
+	s.reviewFixAttempts = state.ReviewFixAttempts
+	s.lastFixedReview = state.LastFixedReview
+	s.manualReviewScope = state.ManualReviewScope
+	s.manualReviewScopeSet = state.ManualReviewScopeSet
+	return nil
+}
+
+func (s *CIStep) persistCIReviewState(sctx *pipeline.StepContext) error {
+	if sctx.StepResultID == "" {
+		return nil
+	}
+	encoded, err := json.Marshal(ciReviewState{
+		ReviewFixAttempts:    s.reviewFixAttempts,
+		LastFixedReview:      s.lastFixedReview,
+		ManualReviewScope:    s.manualReviewScope,
+		ManualReviewScopeSet: s.manualReviewScopeSet,
+	})
+	if err != nil {
+		return err
+	}
+	return sctx.DB.SetCIReviewState(sctx.StepResultID, string(encoded))
 }
 
 func (s *CIStep) Name() types.StepName { return types.StepCI }
@@ -159,6 +201,9 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 		}
 		if stepResult != nil {
 			s.ciFixAttempts = max(s.ciFixAttempts, stepResult.CIFixAttempts)
+			if err := s.restoreCIReviewState(stepResult.CIReviewState); err != nil {
+				return nil, fmt.Errorf("restore CI review state: %w", err)
+			}
 		}
 	}
 	// A run recovered after a restart resumes the rerun budget it already
@@ -525,6 +570,10 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				reviewCommentsForFix = reviewCommentsMatchingKey(reviewComments, s.manualReviewScope)
 			}
 			reviewOnly := len(failing) == 0 && !mergeConflict
+			if !sctx.Fixing && !reviewOnly && len(reviewCommentsForFix) > 0 && s.reviewFixAttempts >= reviewFixLimit {
+				reviewCommentsForFix = nil
+			}
+			mixedReview := !reviewOnly && len(reviewCommentsForFix) > 0
 			autoFixLimit := ciFixLimit
 			if reviewOnly {
 				autoFixLimit = reviewFixLimit
@@ -613,6 +662,10 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				}
 				if sctx.Fixing && !manualFixAttempted {
 					manualFixAttempted = true
+					if len(fixTargets) == 0 && !mergeConflict && len(reviewCommentsForFix) == 0 {
+						sctx.Log("no selected issues remain, waiting for manual intervention...")
+						return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI failures require manual intervention"), nil
+					}
 					sctx.Log(fmt.Sprintf("issues detected: %s - manual fix requested...", issueDesc))
 					previousHeadSHA := sctx.Run.HeadSHA
 					repair, err := s.autoFixCI(sctx, host, pr, fixTargets, mergeConflict, reviewCommentsForFix)
@@ -629,6 +682,9 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 							s.lastFixedReview = reviewFixKey
 						}
 						s.lastFixedCompletedAt = fixCompletedAt
+						if err := s.persistCIReviewState(sctx); err != nil {
+							return nil, fmt.Errorf("persist CI review state: %w", err)
+						}
 						if repair.Revalidate {
 							return &pipeline.StepOutcome{RestartFrom: types.StepReview}, nil
 						}
@@ -644,7 +700,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				} else if autoFixLimit <= 0 {
 					sctx.Log(fmt.Sprintf("issues detected: %s - auto-fix disabled, waiting for manual intervention...", issueDesc))
 					return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI failures require manual intervention"), nil
-				} else if fixAttempts >= autoFixLimit {
+				} else if fixAttempts >= autoFixLimit || (mixedReview && !sctx.Fixing && s.reviewFixAttempts >= reviewFixLimit) {
 					sctx.Log(fmt.Sprintf("issues detected: %s - max auto-fix attempts (%d) reached, waiting for manual intervention...", issueDesc, autoFixLimit))
 					return ciFailureOutcome(reportedIssues, mergeConflict, reviewComments, "CI failures still present after auto-fix attempts"), nil
 				} else if fixKey == s.lastFixedChecks {
@@ -660,6 +716,14 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 						s.reviewFixAttempts = nextAttempt
 					} else {
 						s.ciFixAttempts = nextAttempt
+						if mixedReview && !sctx.Fixing {
+							s.reviewFixAttempts++
+						}
+					}
+					if reviewOnly || (mixedReview && !sctx.Fixing) {
+						if err := s.persistCIReviewState(sctx); err != nil {
+							return nil, fmt.Errorf("persist CI review state: %w", err)
+						}
 					}
 					sctx.Log(fmt.Sprintf("issues detected: %s - auto-fixing (attempt %d/%d)...", issueDesc, nextAttempt, autoFixLimit))
 					previousHeadSHA := sctx.Run.HeadSHA
@@ -675,6 +739,11 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 							s.lastFixedReview = reviewFixKey
 						}
 						s.lastFixedCompletedAt = fixCompletedAt
+						if reviewOnly || (mixedReview && !sctx.Fixing) {
+							if err := s.persistCIReviewState(sctx); err != nil {
+								return nil, fmt.Errorf("persist CI review state: %w", err)
+							}
+						}
 						if repair.Revalidate {
 							return &pipeline.StepOutcome{RestartFrom: types.StepReview}, nil
 						}
@@ -689,10 +758,15 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				}
 			} else {
 				s.lastFixedChecks = ""
-				s.lastFixedReview = ""
-				s.manualReviewScope = ""
-				s.manualReviewScopeSet = false
 				s.lastFixedCompletedAt = nil
+				if reviewErr == nil || reviewErr == scm.ErrUnsupported {
+					s.lastFixedReview = ""
+					s.manualReviewScope = ""
+					s.manualReviewScopeSet = false
+					if err := s.persistCIReviewState(sctx); err != nil {
+						return nil, fmt.Errorf("persist CI review state: %w", err)
+					}
+				}
 				switch {
 				case !prStateKnown || !mergeabilityKnown || (reviewErr != nil && reviewErr != scm.ErrUnsupported):
 					clearCIMonitorReady(sctx)

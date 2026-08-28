@@ -264,30 +264,43 @@ func selectedReviewComments(comments []scm.ReviewComment, previousFindings strin
 	}
 	selectedIDs := make(map[string]bool)
 	selectedIdentifiers := make(map[string]bool)
+	selectedOmittedAggregate := false
+	selectedOmittedExclusions := make(map[string]bool)
 	selectedDetails := make(map[string]bool)
 	for _, finding := range findings.Items {
 		if strings.HasPrefix(finding.ID, "review-comment-") {
 			selectedIDs[finding.ID] = true
 		}
 		if finding.ID == "review-comments-omitted" {
-			for _, identifier := range omittedReviewCommentIdentifiers(finding.Description) {
-				selectedIdentifiers[identifier] = true
+			if finding.ReviewCommentAggregate {
+				selectedOmittedAggregate = true
+				for _, identifier := range finding.ReviewCommentExclusions.IDs() {
+					selectedOmittedExclusions[identifier] = true
+				}
+			} else {
+				for _, identifier := range omittedReviewCommentIdentifiers(finding.Description) {
+					selectedIdentifiers[identifier] = true
+				}
 			}
 		}
 		if finding.File != "" && strings.HasPrefix(finding.Description, "unresolved PR review comment from ") {
 			selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] = true
 		}
 	}
-	selected := make([]scm.ReviewComment, 0, len(comments))
+	matched := make([]scm.ReviewComment, 0, len(comments))
 	for _, comment := range comments {
 		finding := reviewCommentFinding(comment)
+		include := selectedOmittedAggregate && !selectedOmittedExclusions[reviewCommentIdentifier(comment)]
 		if (finding.ID != "" && selectedIDs[finding.ID]) ||
 			selectedIdentifiers[reviewCommentIdentifier(comment)] ||
 			selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] {
-			selected = append(selected, comment)
+			include = true
+		}
+		if include {
+			matched = append(matched, comment)
 		}
 	}
-	return selected
+	return matched
 }
 
 func omittedReviewCommentIdentifiers(description string) []string {
@@ -355,10 +368,19 @@ func reviewCommentIdentifier(c scm.ReviewComment) string {
 	return loc
 }
 
-func reviewCommentsOmittedFinding(comments []scm.ReviewComment) Finding {
+func reviewCommentsOmittedFinding(comments, excluded []scm.ReviewComment) Finding {
 	identifiers := make([]string, 0, len(comments))
 	for _, comment := range comments {
 		identifiers = append(identifiers, sanitizeReviewFindingText(reviewCommentIdentifier(comment)))
+	}
+	excludedIdentifiers := make([]string, 0, len(excluded))
+	for _, comment := range excluded {
+		excludedIdentifiers = append(excludedIdentifiers, reviewCommentIdentifier(comment))
+	}
+	var exclusions types.ReviewCommentExclusions
+	if len(excludedIdentifiers) > 0 {
+		encoded, _ := json.Marshal(excludedIdentifiers)
+		exclusions = types.ReviewCommentExclusions(string(encoded))
 	}
 	description := fmt.Sprintf("%d additional unresolved PR review comments omitted from gate details", len(comments))
 	if len(identifiers) > 0 {
@@ -366,10 +388,12 @@ func reviewCommentsOmittedFinding(comments []scm.ReviewComment) Finding {
 	}
 	description = sanitizeReviewFindingText(description)
 	return Finding{
-		ID:          "review-comments-omitted",
-		Severity:    "warning",
-		Description: description,
-		Action:      types.ActionAskUser,
+		ID:                      "review-comments-omitted",
+		Severity:                "warning",
+		Description:             description,
+		Action:                  types.ActionAskUser,
+		ReviewCommentAggregate:  true,
+		ReviewCommentExclusions: exclusions,
 	}
 }
 
@@ -430,7 +454,7 @@ func marshalCIFindingsWithinLimit(findings Findings, reviewComments []scm.Review
 		items := make([]Finding, 0, len(baseItems)+len(retained)+1)
 		items = append(items, baseItems...)
 		items = append(items, retained...)
-		items = append(items, reviewCommentsOmittedFinding(reviewComments[len(retained):]))
+		items = append(items, reviewCommentsOmittedFinding(reviewComments[len(retained):], reviewComments[:len(retained)]))
 		findings.Items = items
 		encoded, _ = json.Marshal(findings)
 		if len(encoded) <= maxCIFindingsBytes {
@@ -442,7 +466,7 @@ func marshalCIFindingsWithinLimit(findings Findings, reviewComments []scm.Review
 		retained = retained[:len(retained)-1]
 	}
 
-	findings.Items = []Finding{reviewCommentsOmittedFinding(reviewComments)}
+	findings.Items = []Finding{reviewCommentsOmittedFinding(reviewComments, nil)}
 	if len(baseItems) > 0 {
 		findings.Items = append([]Finding{ciFindingsOmittedFinding(baseItems)}, findings.Items...)
 	}

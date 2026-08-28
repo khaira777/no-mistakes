@@ -360,7 +360,7 @@ For review findings, including unresolved review comments surfaced by the CI ste
 The document step attempts documentation fixes during its initial pass, so unresolved documentation findings pause for approval instead of using an automatic follow-up loop.
 For empty `commands.lint`, the document step's combined housekeeping pass also attempts safe lint fixes, and the lint step consumes its result; unresolved blocking lint findings pause for approval instead of starting another automatic fix loop.
 
-`auto_fix.ci` covers the CI step's CI failure and merge-conflict auto-fix attempts. It does not enable automatic repair of review comments; those use `auto_fix.review`.
+`auto_fix.ci` covers the CI step's CI failure and merge-conflict auto-fix attempts. It does not enable automatic repair of review comments; those use `auto_fix.review`. When both kinds of issue are repaired together, one attempt is consumed from each applicable budget.
 
 Legacy alias: `auto_fix.babysit`.
 

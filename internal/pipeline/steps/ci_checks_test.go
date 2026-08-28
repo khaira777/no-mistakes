@@ -189,6 +189,11 @@ func TestSelectedReviewCommentsUsesSelectedFindingIDs(t *testing.T) {
 	if len(selected) != 2 || selected[0].ID != "1" || selected[1].ID != "2" {
 		t.Fatalf("omitted review comments = %#v, want comments 1 and 2", selected)
 	}
+	aggregate := `{"findings":[{"id":"review-comments-omitted","review_comments_aggregate":true,"review_comment_exclusions":["1","2"]}]}`
+	selected = selectedReviewComments(append(comments, scm.ReviewComment{ID: "3"}), aggregate)
+	if len(selected) != 1 || selected[0].ID != "3" {
+		t.Fatalf("aggregate omitted review comments = %#v, want comment 3", selected)
+	}
 	scoped := reviewCommentsMatchingKey(comments, encodeLastFixedChecks(nil, false, []scm.ReviewComment{comments[1]}))
 	if len(scoped) != 1 || scoped[0].ID != "2" {
 		t.Fatalf("scoped review comments = %#v, want comment 2", scoped)
