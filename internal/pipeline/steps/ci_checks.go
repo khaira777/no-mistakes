@@ -214,6 +214,22 @@ func sanitizeReviewFindingText(text string) string {
 	}, text)
 }
 
+func reviewProviderErrorSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := sanitizeReviewFindingText(err.Error())
+	text = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		default:
+			return r
+		}
+	}, text)
+	return trimCommentBody(text, maxCommentBodyBytes)
+}
+
 func reviewCommentFinding(c scm.ReviewComment) Finding {
 	loc := c.Path
 	if c.Line > 0 {
@@ -275,6 +291,33 @@ func reviewCommentsOmittedFinding(comments []scm.ReviewComment) Finding {
 	}
 }
 
+func ciFindingsOmittedFinding(findings []Finding) Finding {
+	details := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		detail := strings.TrimSpace(finding.Description)
+		if finding.File != "" {
+			location := finding.File
+			if finding.Line > 0 {
+				location = fmt.Sprintf("%s:%d", finding.File, finding.Line)
+			}
+			detail = fmt.Sprintf("%s: %s", location, detail)
+		}
+		if detail != "" {
+			details = append(details, sanitizeReviewFindingText(detail))
+		}
+	}
+	description := fmt.Sprintf("%d CI findings omitted from gate details", len(findings))
+	if len(details) > 0 {
+		description += fmt.Sprintf(" (details: %s)", trimCommentBody(strings.Join(details, "; "), maxCommentBodyBytes))
+	}
+	return Finding{
+		ID:          "ci-findings-omitted",
+		Severity:    "warning",
+		Description: sanitizeReviewFindingText(description),
+		Action:      types.ActionAskUser,
+	}
+}
+
 func marshalCIFindingsWithinLimit(findings Findings, reviewComments []scm.ReviewComment) []byte {
 	if len(reviewComments) == 0 {
 		encoded, _ := json.Marshal(findings)
@@ -318,6 +361,9 @@ func marshalCIFindingsWithinLimit(findings Findings, reviewComments []scm.Review
 	}
 
 	findings.Items = []Finding{reviewCommentsOmittedFinding(reviewComments)}
+	if len(baseItems) > 0 {
+		findings.Items = append([]Finding{ciFindingsOmittedFinding(baseItems)}, findings.Items...)
+	}
 	encoded, _ = json.Marshal(findings)
 	return encoded
 }
@@ -418,11 +464,12 @@ func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error)
 }
 
 func ciReviewReadFailureOutcome(err error) *pipeline.StepOutcome {
+	errorSummary := reviewProviderErrorSummary(err)
 	findings := Findings{
 		Summary: "PR review comments could not be read from the provider",
 		Items: []Finding{{
 			Severity:    "warning",
-			Description: fmt.Sprintf("PR review comments could not be read from the provider: %v. Verify that the provider CLI or credentials are authenticated and have permissions to read pull request reviews.", err),
+			Description: fmt.Sprintf("PR review comments could not be read from the provider: %s. Verify that the provider CLI or credentials are authenticated and have permissions to read pull request reviews.", errorSummary),
 			Action:      types.ActionAskUser,
 		}},
 	}

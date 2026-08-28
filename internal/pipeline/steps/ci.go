@@ -384,7 +384,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				if reviewErr != nil && reviewErr != scm.ErrUnsupported {
 					clearCIMonitorReady(sctx)
 					lastMonitorLog = ""
-					sctx.Log(fmt.Sprintf("warning: could not check PR review comments: %v", reviewErr))
+					sctx.Log(fmt.Sprintf("warning: could not check PR review comments: %s", reviewProviderErrorSummary(reviewErr)))
 					consecutiveReviewErrs++
 					if consecutiveReviewErrs >= consecutiveCheckErrorLimit {
 						sctx.Log(fmt.Sprintf("PR review comments could not be read %d consecutive times, parking for a decision", consecutiveReviewErrs))

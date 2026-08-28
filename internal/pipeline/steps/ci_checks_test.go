@@ -2,6 +2,7 @@ package steps
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -142,6 +143,54 @@ func TestCIFailureOutcomeSanitizesReviewCommentTerminalControls(t *testing.T) {
 	prompt := formatReviewComments([]scm.ReviewComment{comment})
 	if !strings.Contains(prompt, "\\u001b[31m") {
 		t.Fatalf("review prompt did not retain JSON-framed raw comment content: %q", prompt)
+	}
+}
+
+func TestCIReviewReadFailureOutcomeBoundsAndSanitizesProviderError(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New("provider response: \x1b]0;spoof\x07" + strings.Repeat("x", 10*1024))
+	outcome := ciReviewReadFailureOutcome(err)
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	description := findings.Items[0].Description
+	if strings.ContainsAny(description, "\x1b\x07") || strings.Contains(description, "spoof") {
+		t.Fatalf("provider controls survived findings sanitization: %q", description)
+	}
+	if !strings.Contains(description, "... [truncated]") {
+		t.Fatalf("provider error was not bounded: %q", description)
+	}
+	if len(description) > maxCommentBodyBytes+256 {
+		t.Fatalf("provider error description is unbounded at %d bytes", len(description))
+	}
+}
+
+func TestCIFailureOutcomePreservesOversizedCIContext(t *testing.T) {
+	t.Parallel()
+
+	failing := []string{strings.Repeat("large-check-name", maxCIFindingsBytes)}
+	comments := []scm.ReviewComment{{ID: "review-1", Author: "review-bot", Path: "pkg/foo.go", Line: 7}}
+	outcome := ciFailureOutcome(failing, false, comments, "review findings")
+	if len(outcome.Findings) > maxCIFindingsBytes {
+		t.Fatalf("findings payload is %d bytes, want <= %d", len(outcome.Findings), maxCIFindingsBytes)
+	}
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	var hasCISummary, hasReviewSummary bool
+	for _, finding := range findings.Items {
+		switch finding.ID {
+		case "ci-findings-omitted":
+			hasCISummary = strings.Contains(finding.Description, "CI check failing:")
+		case "review-comments-omitted":
+			hasReviewSummary = strings.Contains(finding.Description, "review-1")
+		}
+	}
+	if !hasCISummary || !hasReviewSummary {
+		t.Fatalf("oversized findings lost CI or review context: %#v", findings.Items)
 	}
 }
 
