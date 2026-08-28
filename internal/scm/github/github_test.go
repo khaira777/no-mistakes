@@ -1703,6 +1703,8 @@ func TestIsSupportedReviewBot(t *testing.T) {
 		{login: "coderabbitai[bot]", want: true},
 		{login: "github-code-quality[bot]", want: true},
 		{login: "github-code-scanning[bot]", want: true},
+		{login: "github-advanced-security[bot]", want: true},
+		{login: "github-advanced-security", want: true},
 		{login: "chatgpt-codex-connector[bot]", want: true},
 		{login: "dependabot[bot]", want: false},
 		{login: "reviewer", want: false},

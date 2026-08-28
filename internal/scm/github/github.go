@@ -1301,6 +1301,7 @@ func isSupportedReviewBot(login string) bool {
 		"coderabbitai[bot]", "coderabbitai",
 		"github-code-quality[bot]", "github-code-quality",
 		"github-code-scanning[bot]", "github-code-scanning",
+		"github-advanced-security[bot]", "github-advanced-security",
 		"chatgpt-codex-connector[bot]", "chatgpt-codex-connector":
 		return true
 	default:
