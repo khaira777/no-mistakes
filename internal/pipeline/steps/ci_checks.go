@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
 	"github.com/kunchenguid/no-mistakes/internal/types"
@@ -202,6 +204,16 @@ func decodeLastFixedChecks(raw string) (lastFixedIssues, bool) {
 	return issues, true
 }
 
+func sanitizeReviewFindingText(text string) string {
+	text = ansi.Strip(text)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, text)
+}
+
 func reviewCommentFinding(c scm.ReviewComment) Finding {
 	loc := c.Path
 	if c.Line > 0 {
@@ -218,9 +230,10 @@ func reviewCommentFinding(c scm.ReviewComment) Finding {
 	if c.URL != "" {
 		description += fmt.Sprintf(" (see %s)", c.URL)
 	}
+	description = sanitizeReviewFindingText(description)
 	finding := Finding{
 		Severity:    "warning",
-		File:        c.Path,
+		File:        sanitizeReviewFindingText(c.Path),
 		Line:        c.Line,
 		Description: description,
 	}
@@ -247,12 +260,13 @@ func reviewCommentIdentifier(c scm.ReviewComment) string {
 func reviewCommentsOmittedFinding(comments []scm.ReviewComment) Finding {
 	identifiers := make([]string, 0, len(comments))
 	for _, comment := range comments {
-		identifiers = append(identifiers, reviewCommentIdentifier(comment))
+		identifiers = append(identifiers, sanitizeReviewFindingText(reviewCommentIdentifier(comment)))
 	}
 	description := fmt.Sprintf("%d additional unresolved PR review comments omitted from gate details", len(comments))
 	if len(identifiers) > 0 {
 		description += fmt.Sprintf(" (identifiers: %s)", trimCommentBody(strings.Join(identifiers, ", "), maxCommentBodyBytes))
 	}
+	description = sanitizeReviewFindingText(description)
 	return Finding{
 		ID:          "review-comments-omitted",
 		Severity:    "warning",

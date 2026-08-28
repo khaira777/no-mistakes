@@ -114,6 +114,37 @@ func TestCIFailureOutcomeBoundsReviewFindings(t *testing.T) {
 	}
 }
 
+func TestCIFailureOutcomeSanitizesReviewCommentTerminalControls(t *testing.T) {
+	t.Parallel()
+
+	comment := scm.ReviewComment{
+		ID:     "terminal-control",
+		Author: "review-bot",
+		Path:   "pkg/foo.go",
+		Line:   12,
+		Body:   "before \x1b[31mred\x1b[0m \x1b]0;spoof\x07after\x07",
+	}
+	outcome := ciFailureOutcome(nil, false, []scm.ReviewComment{comment}, "review findings")
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	if len(findings.Items) != 1 {
+		t.Fatalf("findings = %#v, want one finding", findings.Items)
+	}
+	description := findings.Items[0].Description
+	if strings.ContainsAny(description, "\x1b\x07") || strings.Contains(description, "spoof") {
+		t.Fatalf("terminal controls survived findings sanitization: %q", description)
+	}
+	if !strings.Contains(description, "before red after") {
+		t.Fatalf("sanitization removed printable review content: %q", description)
+	}
+	prompt := formatReviewComments([]scm.ReviewComment{comment})
+	if !strings.Contains(prompt, "\\u001b[31m") {
+		t.Fatalf("review prompt did not retain JSON-framed raw comment content: %q", prompt)
+	}
+}
+
 // A cancelled check can be a fix target, so the completion snapshot that lets
 // the step notice its own CI re-run has to cover it. Keyed on the fail bucket
 // alone, a cancelled-only fix round records nothing and the step can only log
