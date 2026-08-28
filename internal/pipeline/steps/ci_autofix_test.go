@@ -1464,7 +1464,7 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 	sctx.Repo.UpstreamURL = upstream
 	sctx.Run.Branch = "refs/heads/feature"
 	sctx.Config.CITimeout = 30 * time.Second
-	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 3}
+	sctx.Config.AutoFix = config.AutoFix{CI: 1, Review: 1}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1472,6 +1472,7 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 
 	pollCount := 0
 	step := &CIStep{
+		ciFixAttempts: 1,
 		waitForNextPoll: func(ctx context.Context, interval time.Duration) error {
 			pollCount++
 			if pollCount == 2 {

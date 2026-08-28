@@ -170,11 +170,7 @@ func encodeLastFixedChecks(failing []string, mergeConflict bool, optionalReviews
 	}
 	var commentKeys []string
 	for _, c := range reviewComments {
-		key := strings.TrimSpace(c.ID)
-		if key == "" {
-			key = fmt.Sprintf("%s:%s:%d", c.Author, c.Path, c.Line)
-		}
-		commentKeys = append(commentKeys, key)
+		commentKeys = append(commentKeys, reviewCommentKey(c))
 	}
 	sort.Strings(commentKeys)
 	if len(failing) == 0 && !mergeConflict && len(commentKeys) == 0 {
@@ -189,6 +185,32 @@ func encodeLastFixedChecks(failing []string, mergeConflict bool, optionalReviews
 		return ""
 	}
 	return string(encoded)
+}
+
+func reviewCommentKey(c scm.ReviewComment) string {
+	key := strings.TrimSpace(c.ID)
+	if key == "" {
+		key = fmt.Sprintf("%s:%s:%d", c.Author, c.Path, c.Line)
+	}
+	return key
+}
+
+func reviewCommentsMatchingKey(comments []scm.ReviewComment, raw string) []scm.ReviewComment {
+	issues, ok := decodeLastFixedChecks(raw)
+	if !ok || len(issues.ReviewComments) == 0 {
+		return nil
+	}
+	allowed := make(map[string]bool, len(issues.ReviewComments))
+	for _, key := range issues.ReviewComments {
+		allowed[key] = true
+	}
+	matched := make([]scm.ReviewComment, 0, len(comments))
+	for _, comment := range comments {
+		if allowed[reviewCommentKey(comment)] {
+			matched = append(matched, comment)
+		}
+	}
+	return matched
 }
 
 func decodeLastFixedChecks(raw string) (lastFixedIssues, bool) {
@@ -241,10 +263,16 @@ func selectedReviewComments(comments []scm.ReviewComment, previousFindings strin
 		return nil
 	}
 	selectedIDs := make(map[string]bool)
+	selectedIdentifiers := make(map[string]bool)
 	selectedDetails := make(map[string]bool)
 	for _, finding := range findings.Items {
 		if strings.HasPrefix(finding.ID, "review-comment-") {
 			selectedIDs[finding.ID] = true
+		}
+		if finding.ID == "review-comments-omitted" {
+			for _, identifier := range omittedReviewCommentIdentifiers(finding.Description) {
+				selectedIdentifiers[identifier] = true
+			}
 		}
 		if finding.File != "" && strings.HasPrefix(finding.Description, "unresolved PR review comment from ") {
 			selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] = true
@@ -253,11 +281,35 @@ func selectedReviewComments(comments []scm.ReviewComment, previousFindings strin
 	selected := make([]scm.ReviewComment, 0, len(comments))
 	for _, comment := range comments {
 		finding := reviewCommentFinding(comment)
-		if (finding.ID != "" && selectedIDs[finding.ID]) || selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] {
+		if (finding.ID != "" && selectedIDs[finding.ID]) ||
+			selectedIdentifiers[reviewCommentIdentifier(comment)] ||
+			selectedDetails[fmt.Sprintf("%s\x00%d\x00%s", finding.File, finding.Line, finding.Description)] {
 			selected = append(selected, comment)
 		}
 	}
 	return selected
+}
+
+func omittedReviewCommentIdentifiers(description string) []string {
+	const prefix = " (identifiers: "
+	start := strings.Index(description, prefix)
+	if start < 0 {
+		return nil
+	}
+	rest := description[start+len(prefix):]
+	end := strings.LastIndex(rest, ")")
+	if end < 0 {
+		return nil
+	}
+	identifiers := make([]string, 0)
+	for _, identifier := range strings.Split(rest[:end], ",") {
+		identifier = strings.TrimSpace(identifier)
+		if identifier == "" || strings.HasSuffix(identifier, "... [truncated]") {
+			continue
+		}
+		identifiers = append(identifiers, identifier)
+	}
+	return identifiers
 }
 
 func reviewCommentFinding(c scm.ReviewComment) Finding {

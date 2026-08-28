@@ -1351,7 +1351,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 		}
 		threads := response.Data.Repository.PullRequest.ReviewThreads
 		for _, thread := range threads.Nodes {
-			if thread.IsResolved || thread.IsOutdated {
+			if thread.IsResolved {
 				continue
 			}
 			if err := h.appendReviewThreadComments(ctx, &comments, thread); err != nil {

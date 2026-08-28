@@ -1678,19 +1678,23 @@ func TestHost_GetReviewComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReviewComments failed: %v", err)
 	}
-	if len(comments) != 3 {
-		t.Fatalf("expected 3 comments, got %d: %#v", len(comments), comments)
+	if len(comments) != 4 {
+		t.Fatalf("expected 4 comments, got %d: %#v", len(comments), comments)
 	}
 	c := comments[0]
+	if c.ID != "10" || c.Author != "greptile-apps[bot]" || c.Path != "pkg/outdated.go" || c.Line != 5 || c.Body != "outdated finding" {
+		t.Fatalf("unexpected outdated comment parsed: %#v", c)
+	}
+	c = comments[1]
 	if c.ID != "12345" || c.Author != "greptile-apps[bot]" || c.Path != "pkg/foo.go" || c.Line != 42 || c.Body != "Fix this null pointer" {
 		t.Fatalf("unexpected comment parsed: %#v", c)
 	}
-	c2 := comments[1]
+	c2 := comments[2]
 	if c2.ID != "12347" || c2.Author != "coderabbitai[bot]" || c2.Path != "pkg/cr.go" || c2.Line != 15 || c2.Body != "CodeRabbit finding" {
 		t.Fatalf("unexpected coderabbit comment: %#v", c2)
 	}
-	if comments[2].ID != "12346" || comments[2].Line != 0 || comments[2].Author != "greptile-apps" {
-		t.Fatalf("unexpected paginated comment: %#v", comments[2])
+	if comments[3].ID != "12346" || comments[3].Line != 0 || comments[3].Author != "greptile-apps" {
+		t.Fatalf("unexpected paginated comment: %#v", comments[3])
 	}
 }
 

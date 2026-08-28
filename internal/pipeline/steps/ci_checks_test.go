@@ -184,6 +184,15 @@ func TestSelectedReviewCommentsUsesSelectedFindingIDs(t *testing.T) {
 	if got := selectedReviewComments(comments, `{"findings":[{"id":"ci-1"}]}`); len(got) != 0 {
 		t.Fatalf("unselected review comments = %#v, want none", got)
 	}
+	omitted := `{"findings":[{"id":"review-comments-omitted","description":"2 additional unresolved PR review comments omitted from gate details (identifiers: 1, 2)"}]}`
+	selected = selectedReviewComments(comments, omitted)
+	if len(selected) != 2 || selected[0].ID != "1" || selected[1].ID != "2" {
+		t.Fatalf("omitted review comments = %#v, want comments 1 and 2", selected)
+	}
+	scoped := reviewCommentsMatchingKey(comments, encodeLastFixedChecks(nil, false, []scm.ReviewComment{comments[1]}))
+	if len(scoped) != 1 || scoped[0].ID != "2" {
+		t.Fatalf("scoped review comments = %#v, want comment 2", scoped)
+	}
 }
 
 func TestCIFailureOutcomePreservesOversizedCIContext(t *testing.T) {
