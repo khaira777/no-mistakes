@@ -574,6 +574,11 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				reviewCommentsForFix = nil
 			}
 			reviewOnly := len(failing) == 0 && !mergeConflict && !transientChecksUnresolved
+			reviewAutoFixReady := prStateKnown && mergeabilityKnown && !readinessPending &&
+				(len(checks) > 0 || (sctx.Config != nil && sctx.Config.NoCI))
+			if !sctx.Fixing && reviewOnly && !reviewAutoFixReady {
+				reviewCommentsForFix = nil
+			}
 			if !sctx.Fixing && !reviewOnly && len(reviewCommentsForFix) > 0 && s.reviewFixAttempts >= reviewFixLimit {
 				reviewCommentsForFix = nil
 			}

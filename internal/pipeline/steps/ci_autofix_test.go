@@ -1491,6 +1491,67 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 	}
 }
 
+func TestCIStep_ReviewAutoFixWaitsForKnownReadiness(t *testing.T) {
+	reviewsJSON := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":123,"body":"Please fix this","path":"main.go","line":8,"author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	passingChecks := `[{"name":"build","state":"SUCCESS","bucket":"pass"}]`
+	cases := []struct {
+		name string
+		env  func(*testing.T) []string
+	}{
+		{
+			name: "unknown PR state",
+			env: func(t *testing.T) []string {
+				env := fakeCIGHStateError(t, "provider unavailable", passingChecks)
+				return append(env, "FAKE_CLI_REVIEW_COMMENTS="+reviewsJSON)
+			},
+		},
+		{
+			name: "unknown mergeability",
+			env: func(t *testing.T) []string {
+				env := fakeCIGHMergeableError(t, "OPEN", passingChecks, "provider unavailable")
+				return append(env, "FAKE_CLI_REVIEW_COMMENTS="+reviewsJSON)
+			},
+		},
+		{
+			name: "unknown check state",
+			env: func(t *testing.T) []string {
+				return fakeCIGHReviewComments(t, "OPEN", `[{"name":"build","state":"UNKNOWN","bucket":"unknown"}]`, reviewsJSON)
+			},
+		},
+		{
+			name: "empty checks without no-ci",
+			env: func(t *testing.T) []string {
+				return fakeCIGHReviewComments(t, "OPEN", `[]`, reviewsJSON)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, baseSHA, headSHA := setupGitRepo(t)
+			ag := &mockAgent{name: "test"}
+			prURL := "https://github.com/test/repo/pull/42"
+			sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+			sctx.Env = tc.env(t)
+			sctx.Run.PRURL = &prURL
+			sctx.Config.CITimeout = 30 * time.Second
+			sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
+			step := &CIStep{waitForNextPoll: func(context.Context, time.Duration) error { return nil }}
+
+			outcome, err := step.Execute(sctx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if outcome == nil || !outcome.NeedsApproval {
+				t.Fatalf("expected approval before readiness was known, got: %#v", outcome)
+			}
+			if len(ag.calls) != 0 {
+				t.Fatalf("review auto-fix ran before readiness was known: %d calls", len(ag.calls))
+			}
+		})
+	}
+}
+
 func TestCIStep_UnresolvedCancellationBlocksReviewAutoFix(t *testing.T) {
 	t.Parallel()
 	dir, upstream, baseSHA, headSHA := setupCIRerunRepo(t)

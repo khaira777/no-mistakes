@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
 func TestAllChecksPassedFailsClosed(t *testing.T) {
@@ -132,6 +133,9 @@ func TestCIFailureOutcomeSanitizesReviewCommentTerminalControls(t *testing.T) {
 	}
 	if len(findings.Items) != 1 {
 		t.Fatalf("findings = %#v, want one finding", findings.Items)
+	}
+	if findings.Items[0].Action != types.ActionAskUser {
+		t.Fatalf("finding action = %q, want %q", findings.Items[0].Action, types.ActionAskUser)
 	}
 	description := findings.Items[0].Description
 	if strings.ContainsAny(description, "\x1b\x07") || strings.Contains(description, "spoof") {

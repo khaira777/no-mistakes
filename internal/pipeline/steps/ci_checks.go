@@ -347,6 +347,7 @@ func reviewCommentFinding(c scm.ReviewComment) Finding {
 		File:        sanitizeReviewFindingText(c.Path),
 		Line:        c.Line,
 		Description: description,
+		Action:      types.ActionAskUser,
 	}
 	if c.ID != "" {
 		finding.ID = "review-comment-" + c.ID
