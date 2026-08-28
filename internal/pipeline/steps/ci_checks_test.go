@@ -1,6 +1,9 @@
 package steps
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +75,42 @@ func TestEncodeLastFixedChecks_UsesStableSortedReviewCommentKeys(t *testing.T) {
 	})
 	if first == replaced {
 		t.Fatalf("replaced review comment reused fix key: %q", first)
+	}
+}
+
+func TestCIFailureOutcomeBoundsReviewFindings(t *testing.T) {
+	t.Parallel()
+
+	comments := make([]scm.ReviewComment, 64)
+	for i := range comments {
+		comments[i] = scm.ReviewComment{
+			ID:     fmt.Sprintf("comment-%d", i),
+			Author: "review-bot",
+			Path:   "pkg/large.go",
+			Line:   i + 1,
+			Body:   strings.Repeat("x", maxCommentBodyBytes),
+		}
+	}
+
+	outcome := ciFailureOutcome(nil, false, comments, "review findings")
+	if len(outcome.Findings) > maxCIFindingsBytes {
+		t.Fatalf("findings payload is %d bytes, want <= %d", len(outcome.Findings), maxCIFindingsBytes)
+	}
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	var omitted bool
+	for _, finding := range findings.Items {
+		if finding.ID == "review-comments-omitted" {
+			omitted = true
+			if !strings.Contains(finding.Description, "additional unresolved PR review comments omitted") || !strings.Contains(finding.Description, "comment-") {
+				t.Fatalf("omission finding lacks count and identifiers: %#v", finding)
+			}
+		}
+	}
+	if !omitted {
+		t.Fatalf("expected oversized review findings to include an omission marker: %#v", findings.Items)
 	}
 }
 

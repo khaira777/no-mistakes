@@ -392,6 +392,9 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					}
 				} else {
 					consecutiveReviewErrs = 0
+					if reviewErr == nil {
+						timeoutReviewComments = append(timeoutReviewComments[:0], reviewComments...)
+					}
 				}
 			}
 		}

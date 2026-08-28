@@ -1694,6 +1694,38 @@ func TestHost_GetReviewComments(t *testing.T) {
 	}
 }
 
+func TestHost_GetReviewComments_PaginatesNestedComments(t *testing.T) {
+	t.Parallel()
+
+	firstPage := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+		{"id":"thread-1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":1,"body":"first","path":"pkg/foo.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-1"}}}
+	],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	secondPage := `{"data":{"node":{"comments":{"nodes":[{"databaseId":2,"body":"second","path":"pkg/foo.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r2","createdAt":"2026-08-27T12:01:00Z","author":{"login":"greptile-apps[bot]"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
+	topLevelCommand := func() string {
+		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadsQuery,
+			"-F", "owner=org", "-F", "name=repo", "-F", "number=7"}
+		return strings.Join(args, " ")
+	}
+	nestedCommand := func() string {
+		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadCommentsQuery,
+			"-F", "id=thread-1", "-F", "cursor=comment-1"}
+		return strings.Join(args, " ")
+	}
+
+	host := New(githubTestCmdFactory(map[string]githubTestResponse{
+		topLevelCommand(): {stdout: firstPage},
+		nestedCommand():   {stdout: secondPage},
+	}), nil, "ghe.example.com", "ghe.example.com/org/repo")
+
+	comments, err := host.GetReviewComments(context.Background(), &scm.PR{URL: "https://ghe.example.com/org/repo/pull/7"})
+	if err != nil {
+		t.Fatalf("GetReviewComments failed: %v", err)
+	}
+	if len(comments) != 2 || comments[0].ID != "1" || comments[1].ID != "2" {
+		t.Fatalf("expected nested comments to be paginated, got %#v", comments)
+	}
+}
+
 func TestIsSupportedReviewBot(t *testing.T) {
 	tests := []struct {
 		login string

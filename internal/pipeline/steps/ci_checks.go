@@ -18,6 +18,8 @@ type lastFixedIssues struct {
 	ReviewComments []string `json:"reviewComments,omitempty"`
 }
 
+const maxCIFindingsBytes = 64 * 1024
+
 // pollInterval returns the polling interval based on elapsed time since CI monitoring started.
 // 30s for first 5min, 60s for 5-15min, 120s after.
 func pollInterval(elapsed time.Duration) time.Duration {
@@ -200,6 +202,112 @@ func decodeLastFixedChecks(raw string) (lastFixedIssues, bool) {
 	return issues, true
 }
 
+func reviewCommentFinding(c scm.ReviewComment) Finding {
+	loc := c.Path
+	if c.Line > 0 {
+		loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+	}
+	author := strings.TrimSpace(c.Author)
+	if author == "" {
+		author = "review bot"
+	}
+	description := fmt.Sprintf("unresolved PR review comment from @%s on %s", author, loc)
+	if body := trimCommentBody(c.Body, maxCommentBodyBytes); body != "" {
+		description += ": " + body
+	}
+	if c.URL != "" {
+		description += fmt.Sprintf(" (see %s)", c.URL)
+	}
+	finding := Finding{
+		Severity:    "warning",
+		File:        c.Path,
+		Line:        c.Line,
+		Description: description,
+	}
+	if c.ID != "" {
+		finding.ID = "review-comment-" + c.ID
+	}
+	return finding
+}
+
+func reviewCommentIdentifier(c scm.ReviewComment) string {
+	if id := strings.TrimSpace(c.ID); id != "" {
+		return id
+	}
+	loc := strings.TrimSpace(c.Path)
+	if c.Line > 0 {
+		loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
+	}
+	if loc == "" {
+		return "unknown"
+	}
+	return loc
+}
+
+func reviewCommentsOmittedFinding(comments []scm.ReviewComment) Finding {
+	identifiers := make([]string, 0, len(comments))
+	for _, comment := range comments {
+		identifiers = append(identifiers, reviewCommentIdentifier(comment))
+	}
+	description := fmt.Sprintf("%d additional unresolved PR review comments omitted from gate details", len(comments))
+	if len(identifiers) > 0 {
+		description += fmt.Sprintf(" (identifiers: %s)", trimCommentBody(strings.Join(identifiers, ", "), maxCommentBodyBytes))
+	}
+	return Finding{
+		ID:          "review-comments-omitted",
+		Severity:    "warning",
+		Description: description,
+		Action:      types.ActionAskUser,
+	}
+}
+
+func marshalCIFindingsWithinLimit(findings Findings, reviewComments []scm.ReviewComment) []byte {
+	if len(reviewComments) == 0 {
+		encoded, _ := json.Marshal(findings)
+		return encoded
+	}
+	baseItems := append([]Finding(nil), findings.Items...)
+	retained := make([]Finding, 0, len(reviewComments))
+	omittedAt := len(reviewComments)
+	var encoded []byte
+	for i, comment := range reviewComments {
+		items := make([]Finding, 0, len(baseItems)+len(retained)+1)
+		items = append(items, baseItems...)
+		items = append(items, retained...)
+		items = append(items, reviewCommentFinding(comment))
+		findings.Items = items
+		encoded, _ = json.Marshal(findings)
+		if len(encoded) > maxCIFindingsBytes {
+			omittedAt = i
+			break
+		}
+		retained = append(retained, reviewCommentFinding(comment))
+	}
+	if omittedAt == len(reviewComments) {
+		return encoded
+	}
+
+	for {
+		items := make([]Finding, 0, len(baseItems)+len(retained)+1)
+		items = append(items, baseItems...)
+		items = append(items, retained...)
+		items = append(items, reviewCommentsOmittedFinding(reviewComments[len(retained):]))
+		findings.Items = items
+		encoded, _ = json.Marshal(findings)
+		if len(encoded) <= maxCIFindingsBytes {
+			return encoded
+		}
+		if len(retained) == 0 {
+			break
+		}
+		retained = retained[:len(retained)-1]
+	}
+
+	findings.Items = []Finding{reviewCommentsOmittedFinding(reviewComments)}
+	encoded, _ = json.Marshal(findings)
+	return encoded
+}
+
 func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm.ReviewComment, summary string) *pipeline.StepOutcome {
 	if len(failing) == 0 && !mergeConflict && len(reviewComments) > 0 {
 		switch summary {
@@ -226,34 +334,7 @@ func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm
 			Description: "PR has merge conflicts with the base branch",
 		})
 	}
-	for _, c := range reviewComments {
-		loc := c.Path
-		if c.Line > 0 {
-			loc = fmt.Sprintf("%s:%d", c.Path, c.Line)
-		}
-		author := strings.TrimSpace(c.Author)
-		if author == "" {
-			author = "review bot"
-		}
-		description := fmt.Sprintf("unresolved PR review comment from @%s on %s", author, loc)
-		if body := trimCommentBody(c.Body, maxCommentBodyBytes); body != "" {
-			description += ": " + body
-		}
-		if c.URL != "" {
-			description += fmt.Sprintf(" (see %s)", c.URL)
-		}
-		finding := Finding{
-			Severity:    "warning",
-			File:        c.Path,
-			Line:        c.Line,
-			Description: description,
-		}
-		if c.ID != "" {
-			finding.ID = "review-comment-" + c.ID
-		}
-		findings.Items = append(findings.Items, finding)
-	}
-	findingsJSON, _ := json.Marshal(findings)
+	findingsJSON := marshalCIFindingsWithinLimit(findings, reviewComments)
 	return &pipeline.StepOutcome{
 		NeedsApproval: true,
 		Findings:      string(findingsJSON),
