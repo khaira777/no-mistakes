@@ -1491,6 +1491,86 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 	}
 }
 
+func TestCIStep_UnresolvedCancellationBlocksReviewAutoFix(t *testing.T) {
+	t.Parallel()
+	dir, upstream, baseSHA, headSHA := setupCIRerunRepo(t)
+
+	reviewsJSON := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":123,"body":"Please fix this","path":"main.go","line":8,"author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	env := fakeCIGHReviewComments(t, "OPEN", `[{"name":"test","state":"CANCELLED","bucket":"cancel"}]`, reviewsJSON)
+
+	ag := &mockAgent{name: "test"}
+	prURL := "https://github.com/test/repo/pull/42"
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Env = env
+	sctx.Run.PRURL = &prURL
+	sctx.Repo.UpstreamURL = upstream
+	sctx.Config.CITimeout = 30 * time.Second
+	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
+
+	outcome, err := (&CIStep{}).Execute(sctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome == nil || !outcome.NeedsApproval {
+		t.Fatalf("expected approval while cancellation remains unresolved, got: %#v", outcome)
+	}
+	if len(ag.calls) != 0 {
+		t.Fatalf("review auto-fix ran while the check was cancelled: %d calls", len(ag.calls))
+	}
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("decode findings: %v", err)
+	}
+	if len(findings.Items) != 2 || !strings.Contains(findings.Items[0].Description, "test") || !strings.Contains(findings.Items[1].Description, "Please fix this") {
+		t.Fatalf("expected cancellation and review findings, got: %#v", findings.Items)
+	}
+}
+
+func TestCIStep_AwaitingCancellationRerunBlocksReviewAutoFix(t *testing.T) {
+	t.Parallel()
+	dir, upstream, baseSHA, headSHA := setupCIRerunRepo(t)
+
+	cancelled := `[{"name":"test","state":"CANCELLED","bucket":"cancel","completedAt":"2026-07-26T12:00:00Z","link":"https://github.com/test/repo/actions/runs/900/job/901"}]`
+	env, logFile := fakeCIGHLoggedSequence(t, "OPEN", []string{cancelled, cancelled}, "", "")
+	env = append(env, `FAKE_CLI_REVIEW_COMMENTS={"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":123,"body":"Please fix this","path":"main.go","line":8,"author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`)
+
+	ag := &mockAgent{name: "test"}
+	prURL := "https://github.com/test/repo/pull/42"
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Env = env
+	sctx.Run.PRURL = &prURL
+	sctx.Repo.UpstreamURL = upstream
+	sctx.Config.CITimeout = 30 * time.Second
+	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
+	sctx.Config.CI = config.CI{RerunTransient: 1}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sctx.Ctx = ctx
+	polls := 0
+	step := &CIStep{
+		waitForNextPoll: func(ctx context.Context, interval time.Duration) error {
+			polls++
+			if polls >= 2 {
+				cancel()
+				return ctx.Err()
+			}
+			return nil
+		},
+	}
+
+	outcome, err := step.Execute(sctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected monitoring to wait for the rerun, got outcome %+v err %v", outcome, err)
+	}
+	if len(ag.calls) != 0 {
+		t.Fatalf("review auto-fix ran while the rerun was outstanding: %d calls", len(ag.calls))
+	}
+	if got := strings.Count(ghLog(t, logFile), "run rerun"); got != 1 {
+		t.Fatalf("rerun requests = %d, want exactly one, gh log:\n%s", got, ghLog(t, logFile))
+	}
+}
+
 func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)

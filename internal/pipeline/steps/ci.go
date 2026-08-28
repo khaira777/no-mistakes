@@ -569,7 +569,11 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 			} else if s.manualReviewScopeSet {
 				reviewCommentsForFix = reviewCommentsMatchingKey(reviewComments, s.manualReviewScope)
 			}
-			reviewOnly := len(failing) == 0 && !mergeConflict
+			transientChecksUnresolved := len(unresolvedCancelled) > 0 || len(awaitingRerun) > 0
+			if !sctx.Fixing && transientChecksUnresolved {
+				reviewCommentsForFix = nil
+			}
+			reviewOnly := len(failing) == 0 && !mergeConflict && !transientChecksUnresolved
 			if !sctx.Fixing && !reviewOnly && len(reviewCommentsForFix) > 0 && s.reviewFixAttempts >= reviewFixLimit {
 				reviewCommentsForFix = nil
 			}
@@ -593,7 +597,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					return nil, err
 				}
 			}
-			if rerunIssued || (!hasIssues && len(awaitingRerun) > 0) {
+			if rerunIssued || len(awaitingRerun) > 0 {
 				// The re-run checks are running again for the same commit, so
 				// the monitor waits rather than escalating. This also clears any
 				// previous passed-checks signal, which matters for a cancelled
@@ -612,7 +616,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				sctx.Log("issues detected but checks still pending, waiting for all checks to complete...")
 			} else if hasIssues {
 				lastMonitorLog = ""
-				if !hasFailures && !mergeConflict && !hasReviewFindings && !sctx.Fixing {
+				if !hasFailures && !mergeConflict && len(unresolvedCancelled) > 0 && !sctx.Fixing {
 					// Every remaining issue is a transient check rather than a
 					// verdict on the code. No fix can clear one,
 					// so this parks for a decision instead of spending a
@@ -620,7 +624,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 					// CI step's outcomes are never auto-fixable, so sctx.Fixing
 					// here means the user answered that gate with "fix": that
 					// deliberate override is honored rather than re-parked.
-					return ciUnresolvedCancelledOutcome(unresolvedCancelled, checks, s.transientReruns.used), nil
+					return ciUnresolvedCancelledOutcome(unresolvedCancelled, checks, s.transientReruns.used, reviewComments), nil
 				}
 				// All checks done, issues present - fix or report.
 				// The fix agent is asked to repair job failures; a check the
