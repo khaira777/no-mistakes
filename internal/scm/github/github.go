@@ -435,7 +435,7 @@ const commitChecksQuery = `query($owner:String!,$name:String!,$oid:String!,$curs
 
 const reviewThreadsQuery = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}`
 
-const reviewThreadCommentsQuery = `query($id:ID!,$cursor:String){node(id:$id){... on PullRequestReviewThread{comments(first:100,after:$cursor){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}}}}`
+const reviewThreadCommentsQuery = `query($id:ID!,$cursor:String){node(id:$id){... on PullRequestReviewThread{pullRequest{headRefOid} comments(first:100,after:$cursor){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}}}}`
 
 type githubReviewComment struct {
 	ID        int64     `json:"databaseId"`
@@ -1201,7 +1201,7 @@ func normalizeCheckBucket(bucket, state string) scm.CheckBucket {
 	}
 }
 
-func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor string) (githubReviewCommentsPage, error) {
+func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor string) (githubReviewCommentsPage, string, error) {
 	args := []string{"api"}
 	if h.host != "" {
 		args = append(args, "--hostname", h.host)
@@ -1209,11 +1209,14 @@ func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor str
 	args = append(args, "graphql", "-f", "query="+reviewThreadCommentsQuery, "-F", "id="+threadID, "-F", "cursor="+cursor)
 	out, commandErr := h.cmd(ctx, "gh", args...).CombinedOutput()
 	if commandErr != nil {
-		return githubReviewCommentsPage{}, fmt.Errorf("gh api PR review thread comments: %s: %w", strings.TrimSpace(string(out)), commandErr)
+		return githubReviewCommentsPage{}, "", fmt.Errorf("gh api PR review thread comments: %s: %w", strings.TrimSpace(string(out)), commandErr)
 	}
 	var response struct {
 		Data struct {
 			Node *struct {
+				PullRequest *struct {
+					HeadRefOid string `json:"headRefOid"`
+				} `json:"pullRequest"`
 				Comments githubReviewCommentsPage `json:"comments"`
 			} `json:"node"`
 		} `json:"data"`
@@ -1222,15 +1225,19 @@ func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor str
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(out, &response); err != nil {
-		return githubReviewCommentsPage{}, fmt.Errorf("decode PR review thread comments JSON: %w", err)
+		return githubReviewCommentsPage{}, "", fmt.Errorf("decode PR review thread comments JSON: %w", err)
 	}
 	if len(response.Errors) > 0 {
-		return githubReviewCommentsPage{}, fmt.Errorf("gh api PR review thread comments: %s", response.Errors[0].Message)
+		return githubReviewCommentsPage{}, "", fmt.Errorf("gh api PR review thread comments: %s", response.Errors[0].Message)
 	}
 	if response.Data.Node == nil {
-		return githubReviewCommentsPage{}, errors.New("PR review thread comments response did not contain the review thread")
+		return githubReviewCommentsPage{}, "", errors.New("PR review thread comments response did not contain the review thread")
 	}
-	return response.Data.Node.Comments, nil
+	headRefOid := ""
+	if response.Data.Node.PullRequest != nil {
+		headRefOid = strings.TrimSpace(response.Data.Node.PullRequest.HeadRefOid)
+	}
+	return response.Data.Node.Comments, headRefOid, nil
 }
 
 func appendSupportedReviewComments(comments *[]scm.ReviewComment, rawComments []githubReviewComment) {
@@ -1254,7 +1261,7 @@ func appendSupportedReviewComments(comments *[]scm.ReviewComment, rawComments []
 	}
 }
 
-func (h *Host) appendReviewThreadComments(ctx context.Context, comments *[]scm.ReviewComment, thread githubReviewThread) error {
+func (h *Host) appendReviewThreadComments(ctx context.Context, comments *[]scm.ReviewComment, thread githubReviewThread, initialHeadRefOid *string, pr *scm.PR) error {
 	page := thread.Comments
 	appendSupportedReviewComments(comments, page.Nodes)
 	cursor := ""
@@ -1266,13 +1273,21 @@ func (h *Host) appendReviewThreadComments(ctx context.Context, comments *[]scm.R
 		if nextCursor == "" || nextCursor == cursor {
 			return errors.New("PR review thread comments response returned an invalid page cursor")
 		}
-		var err error
-		page, err = h.getReviewThreadComments(ctx, thread.ID, nextCursor)
+		pageComments, headRefOid, err := h.getReviewThreadComments(ctx, thread.ID, nextCursor)
 		if err != nil {
 			return err
 		}
-		appendSupportedReviewComments(comments, page.Nodes)
+		if headRefOid != "" {
+			if *initialHeadRefOid == "" {
+				*initialHeadRefOid = headRefOid
+				pr.HeadSHA = headRefOid
+			} else if headRefOid != *initialHeadRefOid {
+				return fmt.Errorf("PR head changed during review comment fetch from %s to %s", *initialHeadRefOid, headRefOid)
+			}
+		}
+		appendSupportedReviewComments(comments, pageComments.Nodes)
 		cursor = nextCursor
+		page = pageComments
 	}
 	return nil
 }
@@ -1366,7 +1381,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 			if thread.IsResolved {
 				continue
 			}
-			if err := h.appendReviewThreadComments(ctx, &comments, thread); err != nil {
+			if err := h.appendReviewThreadComments(ctx, &comments, thread, &initialHeadRefOid, pr); err != nil {
 				return nil, err
 			}
 		}
