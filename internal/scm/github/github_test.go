@@ -1735,12 +1735,19 @@ func TestIsSupportedReviewBot(t *testing.T) {
 		login string
 		want  bool
 	}{
+		{login: "greptile[bot]", want: true},
+		{login: "greptile", want: true},
 		{login: "greptile-apps[bot]", want: true},
+		{login: "greptileai[bot]", want: true},
 		{login: "coderabbitai[bot]", want: true},
+		{login: "coderabbit[bot]", want: true},
+		{login: "coderabbit", want: true},
 		{login: "github-code-quality[bot]", want: true},
 		{login: "github-code-scanning[bot]", want: true},
 		{login: "github-advanced-security[bot]", want: true},
 		{login: "github-advanced-security", want: true},
+		{login: "codeql[bot]", want: true},
+		{login: "codeql", want: true},
 		{login: "chatgpt-codex-connector[bot]", want: true},
 		{login: "dependabot[bot]", want: false},
 		{login: "reviewer", want: false},

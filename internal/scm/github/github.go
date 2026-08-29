@@ -1383,11 +1383,15 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 
 func isSupportedReviewBot(login string) bool {
 	switch strings.ToLower(strings.TrimSpace(login)) {
-	case "greptile-apps[bot]", "greptile-apps",
+	case "greptile[bot]", "greptile",
+		"greptile-apps[bot]", "greptile-apps",
+		"greptileai[bot]", "greptileai",
 		"coderabbitai[bot]", "coderabbitai",
+		"coderabbit[bot]", "coderabbit",
 		"github-code-quality[bot]", "github-code-quality",
 		"github-code-scanning[bot]", "github-code-scanning",
 		"github-advanced-security[bot]", "github-advanced-security",
+		"codeql[bot]", "codeql",
 		"chatgpt-codex-connector[bot]", "chatgpt-codex-connector":
 		return true
 	default:
