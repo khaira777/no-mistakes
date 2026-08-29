@@ -617,6 +617,63 @@ func TestAntigravityAgent_RunResumesRecordedConversation(t *testing.T) {
 	}
 }
 
+func TestAntigravityAgent_RunDefaultAndCustomPrintTimeout(t *testing.T) {
+	t.Run("default 24h", func(t *testing.T) {
+		dir := t.TempDir()
+		argsFile := filepath.Join(dir, "argv.jsonl")
+		t.Setenv("AGY_TEST_ARGS_FILE", argsFile)
+		bin := writeFakeAgyRecordingArgs(t, dir, []string{
+			`{"event": "result", "result": {"status": "SUCCESS", "response": "ok"}}`,
+		})
+
+		ca := &antigravityAgent{bin: bin}
+		_, err := ca.Run(context.Background(), RunOpts{
+			Prompt: "work",
+			CWD:    t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("read args log: %v", err)
+		}
+		argv := strings.TrimSpace(string(argsData))
+		if !strings.Contains(argv, "--print-timeout 24h") {
+			t.Errorf("argv = %q, want --print-timeout 24h by default", argv)
+		}
+	})
+
+	t.Run("custom override", func(t *testing.T) {
+		dir := t.TempDir()
+		argsFile := filepath.Join(dir, "argv.jsonl")
+		t.Setenv("AGY_TEST_ARGS_FILE", argsFile)
+		bin := writeFakeAgyRecordingArgs(t, dir, []string{
+			`{"event": "result", "result": {"status": "SUCCESS", "response": "ok"}}`,
+		})
+
+		ca := &antigravityAgent{bin: bin, extraArgs: []string{"-t=15m"}}
+		_, err := ca.Run(context.Background(), RunOpts{
+			Prompt: "work",
+			CWD:    t.TempDir(),
+		})
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("read args log: %v", err)
+		}
+		argv := strings.TrimSpace(string(argsData))
+		if strings.Contains(argv, "--print-timeout 24h") {
+			t.Errorf("argv = %q, should not contain --print-timeout 24h when -t=15m is provided", argv)
+		}
+		if !strings.Contains(argv, "-t=15m") {
+			t.Errorf("argv = %q, want -t=15m preserved", argv)
+		}
+	})
+}
+
 func TestAntigravityAgent_RunStaleConversationStartsFreshWithoutClaimingResume(t *testing.T) {
 	dir := t.TempDir()
 	bin := writeFakeAgy(t, dir, []string{
