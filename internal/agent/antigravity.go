@@ -57,7 +57,7 @@ func (a *antigravityAgent) buildArgs(prompt, schemaPath, sessionID string) []str
 	}
 	args = append(args, "--dangerously-skip-permissions")
 	if !antigravityUserSetPrintTimeout(a.extraArgs) {
-		args = append(args, "--print-timeout", "0")
+		args = append(args, "--print-timeout", "24h")
 	}
 	args = append(args, "--print", prompt)
 	if schemaPath != "" {
