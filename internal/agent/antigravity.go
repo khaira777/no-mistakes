@@ -74,7 +74,7 @@ func antigravityUserSetPrintTimeout(extraArgs []string) bool {
 		if arg == "--print-timeout" || strings.HasPrefix(arg, "--print-timeout=") {
 			return true
 		}
-		if (arg == "-t" || strings.HasPrefix(arg, "-t=")) && i+1 < len(extraArgs) {
+		if strings.HasPrefix(arg, "-t=") || (arg == "-t" && i+1 < len(extraArgs)) {
 			return true
 		}
 	}
