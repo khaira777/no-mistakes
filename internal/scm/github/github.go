@@ -1233,10 +1233,10 @@ func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor str
 	if response.Data.Node == nil {
 		return githubReviewCommentsPage{}, "", errors.New("PR review thread comments response did not contain the review thread")
 	}
-	headRefOid := ""
-	if response.Data.Node.PullRequest != nil {
-		headRefOid = strings.TrimSpace(response.Data.Node.PullRequest.HeadRefOid)
+	if response.Data.Node.PullRequest == nil || strings.TrimSpace(response.Data.Node.PullRequest.HeadRefOid) == "" {
+		return githubReviewCommentsPage{}, "", errors.New("PR review thread comments response did not contain the pull request head")
 	}
+	headRefOid := strings.TrimSpace(response.Data.Node.PullRequest.HeadRefOid)
 	return response.Data.Node.Comments, headRefOid, nil
 }
 
@@ -1277,13 +1277,14 @@ func (h *Host) appendReviewThreadComments(ctx context.Context, comments *[]scm.R
 		if err != nil {
 			return err
 		}
-		if headRefOid != "" {
-			if *initialHeadRefOid == "" {
-				*initialHeadRefOid = headRefOid
-				pr.HeadSHA = headRefOid
-			} else if headRefOid != *initialHeadRefOid {
-				return fmt.Errorf("PR head changed during review comment fetch from %s to %s", *initialHeadRefOid, headRefOid)
-			}
+		if headRefOid == "" {
+			return errors.New("PR review thread comments response did not contain the pull request head")
+		}
+		if *initialHeadRefOid == "" {
+			*initialHeadRefOid = headRefOid
+			pr.HeadSHA = headRefOid
+		} else if headRefOid != *initialHeadRefOid {
+			return fmt.Errorf("PR head changed during review comment fetch from %s to %s", *initialHeadRefOid, headRefOid)
 		}
 		appendSupportedReviewComments(comments, pageComments.Nodes)
 		cursor = nextCursor
@@ -1368,13 +1369,14 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 			return nil, errors.New("PR review comments response did not contain the pull request")
 		}
 		headRefOid := strings.TrimSpace(response.Data.Repository.PullRequest.HeadRefOid)
-		if headRefOid != "" {
-			if initialHeadRefOid == "" {
-				initialHeadRefOid = headRefOid
-				pr.HeadSHA = headRefOid
-			} else if headRefOid != initialHeadRefOid {
-				return nil, fmt.Errorf("PR head changed during review comment fetch from %s to %s", initialHeadRefOid, headRefOid)
-			}
+		if headRefOid == "" {
+			return nil, errors.New("PR review comments response did not contain the pull request head")
+		}
+		if initialHeadRefOid == "" {
+			initialHeadRefOid = headRefOid
+			pr.HeadSHA = headRefOid
+		} else if headRefOid != initialHeadRefOid {
+			return nil, fmt.Errorf("PR head changed during review comment fetch from %s to %s", initialHeadRefOid, headRefOid)
 		}
 		threads := response.Data.Repository.PullRequest.ReviewThreads
 		for _, thread := range threads.Nodes {

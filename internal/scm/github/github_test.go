@@ -1649,7 +1649,7 @@ func TestGitHubHelperProcess(t *testing.T) {
 func TestHost_GetReviewComments(t *testing.T) {
 	t.Parallel()
 
-	firstPage := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+	firstPage := `{"data":{"repository":{"pullRequest":{"headRefOid":"deadbeef","reviewThreads":{"nodes":[
 		{"isResolved":true,"isOutdated":false,"comments":{"nodes":[{"databaseId":1,"body":"resolved","path":"pkg/resolved.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}]}},
 		{"isResolved":false,"isOutdated":true,"comments":{"nodes":[{"databaseId":10,"body":"outdated finding","path":"pkg/outdated.go","line":5,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r10","createdAt":"2026-08-27T12:00:30Z","author":{"login":"greptile-apps[bot]"}}]}},
 		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":2,"body":"human","path":"pkg/human.go","line":8,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r2","createdAt":"2026-08-27T12:01:00Z","author":{"login":"reviewer"}}]}},
@@ -1657,7 +1657,7 @@ func TestHost_GetReviewComments(t *testing.T) {
 		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12345,"body":"Fix this null pointer","path":"pkg/foo.go","line":42,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12345","createdAt":"2026-08-27T12:03:00Z","author":{"login":"greptile-apps[bot]"}}]}},
 		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12347,"body":"CodeRabbit finding","path":"pkg/cr.go","line":15,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12347","createdAt":"2026-08-27T12:03:30Z","author":{"login":"coderabbitai[bot]"}}]}}
 	],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}`
-	secondPage := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[
+	secondPage := `{"data":{"repository":{"pullRequest":{"headRefOid":"deadbeef","reviewThreads":{"nodes":[
 		{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":12346,"body":"Second page","path":"pkg/bar.go","line":null,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r12346","createdAt":"2026-08-27T12:04:00Z","author":{"login":"greptile-apps"}}]}}
 	],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
 	command := func(cursor string) string {
@@ -1846,5 +1846,58 @@ func TestHost_GetReviewComments_HeadMismatchDuringPagination(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PR head changed during review comment fetch") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestHost_GetReviewComments_EmptyHeadRefOidFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	response := `{"data":{"repository":{"pullRequest":{"headRefOid":"","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	cmd := "gh api --hostname ghe.example.com graphql -f query=" + reviewThreadsQuery + " -F owner=org -F name=repo -F number=7"
+
+	host := New(githubTestCmdFactory(map[string]githubTestResponse{
+		cmd: {stdout: response},
+	}), nil, "ghe.example.com", "ghe.example.com/org/repo")
+
+	pr := &scm.PR{URL: "https://ghe.example.com/org/repo/pull/7"}
+	_, err := host.GetReviewComments(context.Background(), pr)
+	if err == nil {
+		t.Fatal("expected error for empty headRefOid, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not contain the pull request head") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHost_GetReviewComments_NestedEmptyHeadRefOidFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	firstPage := `{"data":{"repository":{"pullRequest":{"headRefOid":"head-1","reviewThreads":{"nodes":[
+		{"id":"thread-1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":1,"body":"first","path":"pkg/foo.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-1"}}}
+	],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	secondPage := `{"data":{"node":{"pullRequest":{"headRefOid":""},"comments":{"nodes":[{"databaseId":2,"body":"second","path":"pkg/foo.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r2","createdAt":"2026-08-27T12:01:00Z","author":{"login":"greptile-apps[bot]"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}`
+	topLevelCommand := func() string {
+		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadsQuery,
+			"-F", "owner=org", "-F", "name=repo", "-F", "number=7"}
+		return strings.Join(args, " ")
+	}
+	nestedCommand := func() string {
+		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadCommentsQuery,
+			"-F", "id=thread-1", "-F", "cursor=comment-1"}
+		return strings.Join(args, " ")
+	}
+
+	host := New(githubTestCmdFactory(map[string]githubTestResponse{
+		topLevelCommand(): {stdout: firstPage},
+		nestedCommand():   {stdout: secondPage},
+	}), nil, "ghe.example.com", "ghe.example.com/org/repo")
+
+	pr := &scm.PR{URL: "https://ghe.example.com/org/repo/pull/7"}
+	_, err := host.GetReviewComments(context.Background(), pr)
+	if err == nil {
+		t.Fatal("expected error for empty nested headRefOid, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not contain the pull request head") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
