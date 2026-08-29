@@ -1473,6 +1473,7 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 	pollCount := 0
 	step := &CIStep{
 		ciFixAttempts: 1,
+		baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
 		waitForNextPoll: func(ctx context.Context, interval time.Duration) error {
 			pollCount++
 			if pollCount == 2 {
@@ -1538,9 +1539,15 @@ func TestCIStep_ReviewAutoFixWaitsForKnownReadiness(t *testing.T) {
 			sctx.Run.PRURL = &prURL
 			sctx.Config.CITimeout = 30 * time.Second
 			sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
+			started := time.Date(2026, time.January, 1, 12, 0, 0, 0, time.UTC)
+			current := started
 			step := &CIStep{
-				baseBranchTip:   func(context.Context) (string, bool) { return baseSHA, true },
-				waitForNextPoll: func(context.Context, time.Duration) error { return nil },
+				now:           func() time.Time { return current },
+				baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
+				waitForNextPoll: func(context.Context, time.Duration) error {
+					current = started.Add(35 * time.Second)
+					return nil
+				},
 			}
 
 			outcome, err := step.Execute(sctx)
