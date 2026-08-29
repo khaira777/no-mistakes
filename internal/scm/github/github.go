@@ -433,7 +433,7 @@ func (h *Host) getPRChecks(ctx context.Context, selector string) ([]scm.Check, e
 
 const commitChecksQuery = `query($owner:String!,$name:String!,$oid:String!,$cursor:String){repository(owner:$owner,name:$name){object(expression:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$cursor){nodes{__typename ... on CheckRun{name status conclusion completedAt startedAt detailsUrl} ... on StatusContext{context state targetUrl}} pageInfo{hasNextPage endCursor}}}}}}}`
 
-const reviewThreadsQuery = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}`
+const reviewThreadsQuery = `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(first:100){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}`
 
 const reviewThreadCommentsQuery = `query($id:ID!,$cursor:String){node(id:$id){... on PullRequestReviewThread{comments(first:100,after:$cursor){nodes{databaseId body path line url createdAt author{login}} pageInfo{hasNextPage endCursor}}}}}`
 
@@ -1308,6 +1308,8 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 
 	var comments []scm.ReviewComment
 	cursor := ""
+	initialHeadRefOid := ""
+	pr.HeadSHA = ""
 	for {
 		args := []string{"api"}
 		if h.host != "" {
@@ -1326,6 +1328,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 			Data struct {
 				Repository *struct {
 					PullRequest *struct {
+						HeadRefOid    string `json:"headRefOid"`
 						ReviewThreads struct {
 							Nodes    []githubReviewThread `json:"nodes"`
 							PageInfo struct {
@@ -1348,6 +1351,15 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 		}
 		if response.Data.Repository == nil || response.Data.Repository.PullRequest == nil {
 			return nil, errors.New("PR review comments response did not contain the pull request")
+		}
+		headRefOid := strings.TrimSpace(response.Data.Repository.PullRequest.HeadRefOid)
+		if headRefOid != "" {
+			if initialHeadRefOid == "" {
+				initialHeadRefOid = headRefOid
+				pr.HeadSHA = headRefOid
+			} else if headRefOid != initialHeadRefOid {
+				return nil, fmt.Errorf("PR head changed during review comment fetch from %s to %s", initialHeadRefOid, headRefOid)
+			}
 		}
 		threads := response.Data.Repository.PullRequest.ReviewThreads
 		for _, thread := range threads.Nodes {

@@ -427,6 +427,8 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 		// Check review comments if the provider supports them
 		var reviewComments []scm.ReviewComment
 		var reviewErr error
+		var reviewHead string
+		pr.HeadSHA = sctx.Run.HeadSHA
 		if host.Capabilities().ReviewComments {
 			if rch, ok := host.(scm.ReviewCommentsHost); ok {
 				reviewComments, reviewErr = rch.GetReviewComments(ctx, pr)
@@ -442,6 +444,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 				} else {
 					consecutiveReviewErrs = 0
 					if reviewErr == nil {
+						reviewHead = pr.HeadSHA
 						timeoutReviewComments = append(timeoutReviewComments[:0], reviewComments...)
 					}
 				}
@@ -468,9 +471,15 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 			// already for merged/closed, so reaching here means the PR is open.
 			if consecutiveCheckErrs >= consecutiveCheckErrorLimit {
 				sctx.Log(fmt.Sprintf("CI checks could not be read %d consecutive times, parking for a decision", consecutiveCheckErrs))
-				return ciCheckReadFailureOutcome(err), nil
+				return ciCheckReadFailureOutcome(err, timeoutReviewComments), nil
 			}
 		} else {
+			checkHead := pr.HeadSHA
+			if reviewHead != "" && checkHead != "" && reviewHead != checkHead {
+				clearCIMonitorReady(sctx)
+				sctx.Log(fmt.Sprintf("PR head changed between review comments and checks (%s vs %s); stopping CI monitoring", shortSHA(reviewHead), shortSHA(checkHead)))
+				return ciHeadMismatchOutcome(reviewHead, checkHead), nil
+			}
 			consecutiveCheckErrs = 0
 			// A failure the provider produced before the repository's own steps
 			// ran (a setup/action-resolution outage) is infrastructure, not a

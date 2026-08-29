@@ -744,6 +744,12 @@ func printFakeReviewComments() {
 		fmt.Println(reviewsJSON)
 		return
 	}
+	headSHA := os.Getenv("FAKE_CLI_PR_HEAD_SHA")
+	if headSHA != "" {
+		fmt.Printf(`{"data":{"repository":{"pullRequest":{"headRefOid":%q,"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`, headSHA)
+		fmt.Println()
+		return
+	}
 	fmt.Println(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`)
 }
 

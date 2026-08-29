@@ -1753,3 +1753,55 @@ func TestIsSupportedReviewBot(t *testing.T) {
 		})
 	}
 }
+
+func TestHost_GetReviewComments_CapturesHeadRefOid(t *testing.T) {
+	t.Parallel()
+
+	response := `{"data":{"repository":{"pullRequest":{"headRefOid":"deadbeef1234","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+	cmd := "gh api --hostname ghe.example.com graphql -f query=" + reviewThreadsQuery + " -F owner=org -F name=repo -F number=7"
+
+	host := New(githubTestCmdFactory(map[string]githubTestResponse{
+		cmd: {stdout: response},
+	}), nil, "ghe.example.com", "ghe.example.com/org/repo")
+
+	pr := &scm.PR{URL: "https://ghe.example.com/org/repo/pull/7"}
+	_, err := host.GetReviewComments(context.Background(), pr)
+	if err != nil {
+		t.Fatalf("GetReviewComments failed: %v", err)
+	}
+	if pr.HeadSHA != "deadbeef1234" {
+		t.Fatalf("pr.HeadSHA = %q, want deadbeef1234", pr.HeadSHA)
+	}
+}
+
+func TestHost_GetReviewComments_HeadMismatchDuringPagination(t *testing.T) {
+	t.Parallel()
+
+	firstPage := `{"data":{"repository":{"pullRequest":{"headRefOid":"head-1","reviewThreads":{"nodes":[
+		{"id":"thread-1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":1,"body":"first","path":"pkg/foo.go","line":4,"url":"https://ghe.example.com/org/repo/pull/7#discussion_r1","createdAt":"2026-08-27T12:00:00Z","author":{"login":"greptile-apps[bot]"}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}
+	],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}`
+	secondPage := `{"data":{"repository":{"pullRequest":{"headRefOid":"head-2","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
+
+	command := func(cursor string) string {
+		args := []string{"gh", "api", "--hostname", "ghe.example.com", "graphql", "-f", "query=" + reviewThreadsQuery,
+			"-F", "owner=org", "-F", "name=repo", "-F", "number=7"}
+		if cursor != "" {
+			args = append(args, "-F", "cursor="+cursor)
+		}
+		return strings.Join(args, " ")
+	}
+
+	host := New(githubTestCmdFactory(map[string]githubTestResponse{
+		command(""):         {stdout: firstPage},
+		command("cursor-1"): {stdout: secondPage},
+	}), nil, "ghe.example.com", "ghe.example.com/org/repo")
+
+	pr := &scm.PR{URL: "https://ghe.example.com/org/repo/pull/7"}
+	_, err := host.GetReviewComments(context.Background(), pr)
+	if err == nil {
+		t.Fatal("expected head mismatch error during pagination, got nil")
+	}
+	if !strings.Contains(err.Error(), "PR head changed during review comment fetch") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}

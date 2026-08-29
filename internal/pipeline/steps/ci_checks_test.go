@@ -293,3 +293,46 @@ func TestCIFixAgentTimeoutOutcomePreservesReviewTargets(t *testing.T) {
 		t.Fatalf("selected review comments = %#v, want only the timed-out target", selected)
 	}
 }
+
+func TestCIFixAgentTimeoutOutcomeBoundsLargeReviewTargets(t *testing.T) {
+	comments := make([]scm.ReviewComment, 1000)
+	for i := range comments {
+		comments[i] = scm.ReviewComment{
+			ID:     fmt.Sprintf("review-%d", i),
+			Author: "greptile-apps[bot]",
+			Path:   fmt.Sprintf("pkg/file_%d.go", i),
+			Line:   i + 1,
+			Body:   "large comment body",
+		}
+	}
+	outcome := ciFixAgentTimeoutOutcome("many unresolved review comments", "", errors.New("timed out"), comments)
+	if len(outcome.Findings) > maxCIFindingsBytes {
+		t.Fatalf("findings payload is %d bytes, want <= %d", len(outcome.Findings), maxCIFindingsBytes)
+	}
+	selected := selectedReviewComments(comments, outcome.Findings)
+	if len(selected) != len(comments) {
+		t.Fatalf("selected review comments count = %d, want %d", len(selected), len(comments))
+	}
+}
+
+func TestCICheckReadFailureOutcomePreservesReviewComments(t *testing.T) {
+	comments := []scm.ReviewComment{{
+		ID:     "123",
+		Author: "greptile-apps[bot]",
+		Path:   "pkg/foo.go",
+		Line:   10,
+		Body:   "fix bug",
+	}}
+	outcome := ciCheckReadFailureOutcome(errors.New("gh pr checks failed"), comments)
+	var findings Findings
+	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
+		t.Fatalf("unmarshal findings: %v", err)
+	}
+	if len(findings.Items) != 2 {
+		t.Fatalf("expected 2 findings (check error + review comment), got %d: %#v", len(findings.Items), findings.Items)
+	}
+	selected := selectedReviewComments(comments, outcome.Findings)
+	if len(selected) != 1 || selected[0].ID != "123" {
+		t.Fatalf("selected review comments = %#v, want comment 123", selected)
+	}
+}

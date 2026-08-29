@@ -630,7 +630,7 @@ func TestCIStep_CheckReadFailureCounterResetsAfterSuccessfulRead(t *testing.T) {
 // unconditional instruction to install or upgrade `gh`, which is GitHub-only.
 func TestCICheckReadFailureOutcome_ProviderNeutral(t *testing.T) {
 	t.Parallel()
-	outcome := ciCheckReadFailureOutcome(errors.New("glab mr checks: failed to read checks"))
+	outcome := ciCheckReadFailureOutcome(errors.New("glab mr checks: failed to read checks"), nil)
 	var findings Findings
 	if err := json.Unmarshal([]byte(outcome.Findings), &findings); err != nil {
 		t.Fatalf("unmarshal findings: %v", err)

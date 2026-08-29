@@ -276,7 +276,7 @@ func selectedReviewComments(comments []scm.ReviewComment, previousFindings strin
 				selectedIdentifiers[identifier] = true
 			}
 		}
-		if finding.ID == "review-comments-omitted" {
+		if finding.ReviewCommentAggregate || finding.ID == "review-comments-omitted" {
 			if finding.ReviewCommentAggregate {
 				selectedOmittedAggregate = true
 				for _, identifier := range finding.ReviewCommentExclusions.IDs() {
@@ -520,7 +520,7 @@ func ciFailureOutcome(failing []string, mergeConflict bool, reviewComments []scm
 // spin to ci_timeout.
 const consecutiveCheckErrorLimit = 6
 
-func ciCheckReadFailureOutcome(err error) *pipeline.StepOutcome {
+func ciCheckReadFailureOutcome(err error, reviewComments []scm.ReviewComment) *pipeline.StepOutcome {
 	findings := Findings{
 		Summary: "CI checks could not be read from the provider",
 		Items: []Finding{{
@@ -529,7 +529,7 @@ func ciCheckReadFailureOutcome(err error) *pipeline.StepOutcome {
 			Action:      types.ActionAskUser,
 		}},
 	}
-	findingsJSON, _ := json.Marshal(findings)
+	findingsJSON := marshalCIFindingsWithinLimit(findings, reviewComments)
 	return &pipeline.StepOutcome{
 		NeedsApproval: true,
 		Findings:      string(findingsJSON),
@@ -578,6 +578,33 @@ func ciFixAgentTimeoutOutcome(issueDesc string, dirtyWorktree string, err error,
 	findings := Findings{
 		Summary: "CI auto-fix agent exceeded its invocation budget",
 		Items:   []Finding{timeoutFinding},
+	}
+	findingsJSON, _ := json.Marshal(findings)
+	if len(findingsJSON) > maxCIFindingsBytes && len(identifiers) > 0 {
+		timeoutFinding.ReviewCommentTargets = ""
+		timeoutFinding.ReviewCommentAggregate = true
+		findings.Items = []Finding{timeoutFinding}
+		findingsJSON, _ = json.Marshal(findings)
+	}
+	if len(findingsJSON) > maxCIFindingsBytes {
+		timeoutFinding.Description = trimCommentBody(timeoutFinding.Description, maxCIFindingsBytes-1024)
+		findings.Items = []Finding{timeoutFinding}
+		findingsJSON, _ = json.Marshal(findings)
+	}
+	return &pipeline.StepOutcome{
+		NeedsApproval: true,
+		Findings:      string(findingsJSON),
+	}
+}
+
+func ciHeadMismatchOutcome(expected, observed string) *pipeline.StepOutcome {
+	findings := Findings{
+		Summary: "PR head no longer matches the commit this run delivered",
+		Items: []Finding{{
+			Severity:    "warning",
+			Description: fmt.Sprintf("PR head changed: expected head %s, observed %s on the pull request", expected, observed),
+			Action:      types.ActionAskUser,
+		}},
 	}
 	findingsJSON, _ := json.Marshal(findings)
 	return &pipeline.StepOutcome{
