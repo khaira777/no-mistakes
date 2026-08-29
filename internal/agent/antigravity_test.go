@@ -15,7 +15,7 @@ func TestAntigravityAgent_BuildArgs(t *testing.T) {
 	a := &antigravityAgent{bin: "agy"}
 	args := a.buildArgs("test prompt", "", "")
 
-	expected := []string{"--dangerously-skip-permissions", "--print", "test prompt", "--output-format", "stream-json"}
+	expected := []string{"--dangerously-skip-permissions", "--print-timeout", "0", "--print", "test prompt", "--output-format", "stream-json"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
@@ -30,7 +30,7 @@ func TestAntigravityAgent_BuildArgs_WithSchema(t *testing.T) {
 	a := &antigravityAgent{bin: "agy"}
 	args := a.buildArgs("test prompt", "/tmp/schema.json", "")
 
-	expected := []string{"--dangerously-skip-permissions", "--print", "test prompt", "--json-schema", "/tmp/schema.json", "--output-format", "stream-json"}
+	expected := []string{"--dangerously-skip-permissions", "--print-timeout", "0", "--print", "test prompt", "--json-schema", "/tmp/schema.json", "--output-format", "stream-json"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
@@ -45,13 +45,29 @@ func TestAntigravityAgent_BuildArgs_WithExtraArgs(t *testing.T) {
 	a := &antigravityAgent{bin: "agy", extraArgs: []string{"--debug"}}
 	args := a.buildArgs("test prompt", "", "")
 
-	expected := []string{"--debug", "--dangerously-skip-permissions", "--print", "test prompt", "--output-format", "stream-json"}
+	expected := []string{"--debug", "--dangerously-skip-permissions", "--print-timeout", "0", "--print", "test prompt", "--output-format", "stream-json"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
 	}
 	for i, want := range expected {
 		if args[i] != want {
 			t.Errorf("arg[%d]: expected %q, got %q", i, want, args[i])
+		}
+	}
+}
+
+func TestAntigravityAgent_BuildArgs_WithUserPrintTimeoutOverride(t *testing.T) {
+	for _, extra := range [][]string{
+		{"--print-timeout", "30m"},
+		{"--print-timeout=1h"},
+		{"-t", "10m"},
+		{"-t=15m"},
+	} {
+		a := &antigravityAgent{bin: "agy", extraArgs: extra}
+		args := a.buildArgs("test prompt", "", "")
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--print-timeout 0") {
+			t.Errorf("args = %v, should not contain default --print-timeout 0 when extraArgs has %v", args, extra)
 		}
 	}
 }
