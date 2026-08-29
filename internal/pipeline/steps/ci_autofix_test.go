@@ -1492,6 +1492,7 @@ func TestCIStep_UnresolvedReviewCommentsTriggerAutoFixWhenChecksPass(t *testing.
 }
 
 func TestCIStep_ReviewAutoFixWaitsForKnownReadiness(t *testing.T) {
+	t.Parallel()
 	reviewsJSON := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false,"isOutdated":false,"comments":{"nodes":[{"databaseId":123,"body":"Please fix this","path":"main.go","line":8,"author":{"login":"greptile-apps[bot]"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}}}`
 	passingChecks := `[{"name":"build","state":"SUCCESS","bucket":"pass"}]`
 	cases := []struct {
@@ -1528,6 +1529,7 @@ func TestCIStep_ReviewAutoFixWaitsForKnownReadiness(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir, baseSHA, headSHA := setupGitRepo(t)
 			ag := &mockAgent{name: "test"}
 			prURL := "https://github.com/test/repo/pull/42"
@@ -1536,7 +1538,10 @@ func TestCIStep_ReviewAutoFixWaitsForKnownReadiness(t *testing.T) {
 			sctx.Run.PRURL = &prURL
 			sctx.Config.CITimeout = 30 * time.Second
 			sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
-			step := &CIStep{waitForNextPoll: func(context.Context, time.Duration) error { return nil }}
+			step := &CIStep{
+				baseBranchTip:   func(context.Context) (string, bool) { return baseSHA, true },
+				waitForNextPoll: func(context.Context, time.Duration) error { return nil },
+			}
 
 			outcome, err := step.Execute(sctx)
 			if err != nil {
@@ -1568,7 +1573,10 @@ func TestCIStep_UnresolvedCancellationBlocksReviewAutoFix(t *testing.T) {
 	sctx.Config.CITimeout = 30 * time.Second
 	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 1}
 
-	outcome, err := (&CIStep{}).Execute(sctx)
+	step := &CIStep{
+		baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
+	}
+	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1610,6 +1618,7 @@ func TestCIStep_AwaitingCancellationRerunBlocksReviewAutoFix(t *testing.T) {
 	sctx.Ctx = ctx
 	polls := 0
 	step := &CIStep{
+		baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
 		waitForNextPoll: func(ctx context.Context, interval time.Duration) error {
 			polls++
 			if polls >= 2 {
@@ -1656,7 +1665,9 @@ func TestCIStep_UnresolvedReviewCommentsBlockReadinessWhenAutoFixDisabled(t *tes
 	sctx.Config.CITimeout = 30 * time.Second
 	sctx.Config.AutoFix = config.AutoFix{CI: 3, Review: 0}
 
-	step := &CIStep{}
+	step := &CIStep{
+		baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
+	}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1705,7 +1716,10 @@ func TestCIStep_FixMode_DoesNotRunWithoutSelectedReviewTargets(t *testing.T) {
 	sctx.Fixing = true
 	sctx.PreviousFindings = `{"findings":[{"id":"ci-1"}]}`
 
-	outcome, err := (&CIStep{}).Execute(sctx)
+	step := &CIStep{
+		baseBranchTip: func(context.Context) (string, bool) { return baseSHA, true },
+	}
+	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -62,6 +62,8 @@ func TestPendingCheckMatchesLastFixed_SpecialCheckNames(t *testing.T) {
 }
 
 func TestEncodeLastFixedChecks_UsesStableSortedReviewCommentKeys(t *testing.T) {
+	t.Parallel()
+
 	comments := []scm.ReviewComment{
 		{ID: "comment-b", Author: "bot", Path: "b.go", Line: 2},
 		{ID: "comment-a", Author: "bot", Path: "a.go", Line: 1},
@@ -287,6 +289,8 @@ func TestTerminalFailureCompletionTimesStillCoverFailingChecks(t *testing.T) {
 }
 
 func TestCIFixAgentTimeoutOutcomePreservesReviewTargets(t *testing.T) {
+	t.Parallel()
+
 	comments := []scm.ReviewComment{{ID: "review-1"}, {ID: "review-2"}}
 	outcome := ciFixAgentTimeoutOutcome("1 unresolved review comment", "", errors.New("timed out"), comments[:1])
 	if selected := selectedReviewComments(comments, outcome.Findings); len(selected) != 1 || selected[0].ID != "review-1" {
@@ -295,6 +299,8 @@ func TestCIFixAgentTimeoutOutcomePreservesReviewTargets(t *testing.T) {
 }
 
 func TestCIFixAgentTimeoutOutcomeBoundsLargeReviewTargets(t *testing.T) {
+	t.Parallel()
+
 	comments := make([]scm.ReviewComment, 1000)
 	for i := range comments {
 		comments[i] = scm.ReviewComment{
@@ -316,6 +322,8 @@ func TestCIFixAgentTimeoutOutcomeBoundsLargeReviewTargets(t *testing.T) {
 }
 
 func TestCICheckReadFailureOutcomePreservesReviewComments(t *testing.T) {
+	t.Parallel()
+
 	comments := []scm.ReviewComment{{
 		ID:     "123",
 		Author: "greptile-apps[bot]",
