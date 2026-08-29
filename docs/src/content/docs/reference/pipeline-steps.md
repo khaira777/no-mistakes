@@ -306,16 +306,16 @@ Monitors PR health after creation and auto-fixes CI failures. Mergeability polli
 - Bounds that CI-fix agent with [`agent_timeout`](/no-mistakes/reference/global-config/#agent_timeout): an expired budget cancels the agent and fails the attempt with a timeout diagnostic rather than leaving the run active indefinitely, and a late successful return after the deadline is not committed
 - If the CI-fix agent exhausts that budget, pauses for user approval instead of re-issuing the same request on the next poll. A budget burn is not transient - repeating it costs another full budget - so the remaining auto-fix attempts are left for the user to spend deliberately with a fix response. The finding carries the measured timeout diagnostic and, when the timed-out agent left uncommitted work in the run worktree, that worktree's path. Ordinary (non-timeout) fix failures keep retrying as before
 - On GitHub, GitLab, Forgejo, or Azure DevOps merge conflict: asks the agent to rebase onto the latest PR base branch tip and make the smallest correct root-cause fix for the conflicts, using user intent when available
-- If both CI failures and a GitHub, GitLab, Forgejo, or Azure DevOps merge conflict are present: fixes both in the same attempt
+- If CI failures, merge conflicts, or unresolved review comments are present: fixes them together in the same attempt, consuming one attempt from each applicable budget ([`auto_fix.ci`](/no-mistakes/reference/global-config/#auto_fix) and [`auto_fix.review`](/no-mistakes/reference/global-config/#auto_fix))
 - If a fix attempt produces no changes: automatic mode leaves the failure undeduplicated so it can retry until the auto-fix limit, while manual fix mode returns immediately for manual intervention
 - Counts each automatic fix attempt durably when it starts, so revalidation or a daemon restart cannot reset the configured limit
 - Exits cleanly when the PR is merged, closed, or declined
 - If the idle timeout is reached while the PR is still open: pauses for user approval, even when CI checks are currently healthy
 - If the idle timeout is reached while CI failures or, on GitHub, GitLab, Forgejo, or Azure DevOps, a merge conflict are still known: pauses for user approval with findings for the remaining issues
 - If the idle timeout is reached while GitHub, GitLab, Forgejo, or Azure DevOps PR mergeability is still unresolved: pauses for user approval with a finding describing the unresolved mergeability state
-- If CI failures or a GitHub, GitLab, Forgejo, or Azure DevOps merge conflict persist after the auto-fix limit: pauses for user approval with findings listing each failing check and/or the merge conflict
+- If CI failures, unresolved review comments, or a GitHub, GitLab, Forgejo, or Azure DevOps merge conflict persist after the auto-fix limit: pauses for user approval with findings listing each failing check, unresolved review comment, and/or the merge conflict
 
-**Default auto-fix limit:** `3` total CI auto-fix attempts.
+**Default auto-fix limit:** `3` total CI auto-fix attempts for CI failures and merge conflicts; review comments use [`auto_fix.review`](/no-mistakes/reference/global-config/#auto_fix) (default `0`).
 
 **Default transient rerun budget:** `0` reruns per provider-attributed check per run. GitHub pre-run failure detection is disabled at this value.
 
