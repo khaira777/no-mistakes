@@ -741,6 +741,10 @@ func printFakeReviewComments() {
 		os.Exit(1)
 	}
 	if reviewsJSON := os.Getenv("FAKE_CLI_REVIEW_COMMENTS"); reviewsJSON != "" {
+		headSHA := os.Getenv("FAKE_CLI_PR_HEAD_SHA")
+		if headSHA != "" && !strings.Contains(reviewsJSON, "headRefOid") {
+			reviewsJSON = strings.Replace(reviewsJSON, `"pullRequest":{`, fmt.Sprintf(`"pullRequest":{"headRefOid":%q,`, headSHA), 1)
+		}
 		fmt.Println(reviewsJSON)
 		return
 	}
